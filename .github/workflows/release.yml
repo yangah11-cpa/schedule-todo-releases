@@ -1,29 +1,52 @@
 name: 빌드 및 릴리스
 
-# v로 시작하는 태그(v1.0.3 등)를 push하면 Windows 설치 파일을 빌드해 릴리스로 게시합니다.
+# main에 push될 때 package.json의 version에 해당하는 릴리스(v1.2.3)가 아직 없으면
+# Windows 설치 파일을 빌드해 릴리스로 게시합니다. (Actions 탭에서 수동 실행도 가능)
 on:
   push:
-    tags: ['v*']
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: 새 버전인지 확인
+        id: ver
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V=$(node -p "require('./package.json').version")
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          if gh release view "v$V" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "v$V 릴리스가 이미 있어 빌드를 건너뜁니다."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-node@v4
+        if: steps.ver.outputs.build == 'true'
         with:
           node-version: 22
           cache: npm
-      - name: 태그와 package.json 버전 일치 확인
-        shell: bash
-        run: |
-          V=$(node -p "require('./package.json').version")
-          if [ "v$V" != "${GITHUB_REF_NAME}" ]; then echo "태그 ${GITHUB_REF_NAME} ≠ package.json v$V"; exit 1; fi
-      - run: npm ci
+
+      - name: 의존성 설치
+        if: steps.ver.outputs.build == 'true'
+        run: npm ci
+
       - name: 설치 파일 빌드 및 게시
+        if: steps.ver.outputs.build == 'true'
         run: npx electron-builder --win nsis --x64 --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
