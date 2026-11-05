@@ -1,0 +1,79 @@
+{
+  "name": "schedule-todo",
+  "productName": "일정할일",
+  "version": "1.0.3",
+  "description": "일정 & 할일 — 구글 캘린더 연동, 음력 반복, 반복·하위 할 일",
+  "main": "src/main.js",
+  "author": "양하승",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "electron": "^38.8.6",
+    "electron-builder": "^26.18.0",
+    "korean-lunar-calendar": "^0.4.0",
+    "resedit": "^3.1.0"
+  },
+  "build": {
+    "appId": "com.yangah.scheduletodo",
+    "productName": "일정할일",
+    "copyright": "양하승",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "afterPack": "build/afterPack.js",
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "executableName": "ScheduleTodo",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "일정 & 할일",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "installerLanguages": [
+        "ko_KR"
+      ],
+      "language": "1042",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "ScheduleTodo-Setup-${version}.exe"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "yangah11-cpa",
+        "repo": "schedule-todo-releases",
+        "releaseType": "release"
+      }
+    ]
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yangah11-cpa/schedule-todo-releases.git"
+  }
+}

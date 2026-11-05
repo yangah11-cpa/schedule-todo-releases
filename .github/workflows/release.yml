@@ -1,0 +1,29 @@
+name: 빌드 및 릴리스
+
+# v로 시작하는 태그(v1.0.3 등)를 push하면 Windows 설치 파일을 빌드해 릴리스로 게시합니다.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: 태그와 package.json 버전 일치 확인
+        shell: bash
+        run: |
+          V=$(node -p "require('./package.json').version")
+          if [ "v$V" != "${GITHUB_REF_NAME}" ]; then echo "태그 ${GITHUB_REF_NAME} ≠ package.json v$V"; exit 1; fi
+      - run: npm ci
+      - name: 설치 파일 빌드 및 게시
+        run: npx electron-builder --win nsis --x64 --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

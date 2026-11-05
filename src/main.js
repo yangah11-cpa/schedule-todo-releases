@@ -1,0 +1,210 @@
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
+const fs = require('fs');
+const path = require('path');
+const { GoogleCalendar } = require('./google');
+
+app.setAppUserModelId('com.yangah.scheduletodo');
+app.commandLine.appendSwitch('lang', 'ko-KR');
+
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+}
+
+const dataDir = app.getPath('userData');
+const dataFile = path.join(dataDir, 'data.json');
+const stateFile = path.join(dataDir, 'window.json');
+let win;
+let google;
+
+function readJson(file, fallback) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJsonAtomic(file, obj) {
+  const tmp = file + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(obj, null, 1), 'utf8');
+  if (fs.existsSync(file)) {
+    try {
+      fs.copyFileSync(file, file.replace(/\.json$/, '.bak.json'));
+    } catch {
+      /* 백업 실패는 무시 */
+    }
+  }
+  fs.renameSync(tmp, file);
+}
+
+function loadData() {
+  let d = readJson(dataFile, null);
+  if (!d) d = readJson(dataFile.replace(/\.json$/, '.bak.json'), null);
+  return d || { version: 1, events: [], todos: [], settings: {} };
+}
+
+function createWindow() {
+  const st = readJson(stateFile, { width: 1440, height: 900 });
+  win = new BrowserWindow({
+    width: st.width || 1440,
+    height: st.height || 900,
+    x: st.x,
+    y: st.y,
+    minWidth: 960,
+    minHeight: 620,
+    title: '일정 & 할일',
+    icon: path.join(__dirname, 'icon.png'),
+    backgroundColor: '#F3F2EE',
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  if (st.maximized) win.maximize();
+  win.once('ready-to-show', () => win.show());
+  win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
+  win.webContents.on('before-input-event', (e, input) => {
+    if (input.type === 'keyDown' && input.key === 'F12') win.webContents.toggleDevTools();
+  });
+
+  const saveState = () => {
+    if (!win || win.isDestroyed()) return;
+    const b = win.getNormalBounds();
+    fs.writeFileSync(stateFile, JSON.stringify({ ...b, maximized: win.isMaximized() }));
+  };
+  win.on('close', saveState);
+}
+
+app.on('second-instance', () => {
+  if (win) {
+    if (win.isMinimized()) win.restore();
+    win.focus();
+  }
+});
+
+app.whenReady().then(() => {
+  Menu.setApplicationMenu(null);
+  google = new GoogleCalendar(dataDir);
+
+  ipcMain.handle('data:load', () => loadData());
+  ipcMain.handle('data:save', (_e, d) => {
+    writeJsonAtomic(dataFile, d);
+    return true;
+  });
+  ipcMain.handle('data:export', async (_e, d) => {
+    const r = await dialog.showSaveDialog(win, {
+      title: '데이터 내보내기',
+      defaultPath: `일정할일_백업_${new Date().toISOString().slice(0, 10)}.json`,
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+    if (r.canceled || !r.filePath) return false;
+    fs.writeFileSync(r.filePath, JSON.stringify(d, null, 1), 'utf8');
+    return true;
+  });
+  ipcMain.handle('data:import', async () => {
+    const r = await dialog.showOpenDialog(win, {
+      title: '데이터 가져오기',
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+      properties: ['openFile'],
+    });
+    if (r.canceled || !r.filePaths[0]) return null;
+    const d = JSON.parse(fs.readFileSync(r.filePaths[0], 'utf8'));
+    if (!Array.isArray(d.events) || !Array.isArray(d.todos)) throw new Error('이 프로그램의 백업 파일이 아닙니다.');
+    return d;
+  });
+  ipcMain.handle('app:openExternal', (_e, url) => {
+    if (/^https:\/\//.test(url)) shell.openExternal(url);
+  });
+  ipcMain.handle('app:version', () => app.getVersion());
+
+  const wrap = (fn) => async (_e, ...args) => {
+    try {
+      return { ok: true, data: await fn(...args) };
+    } catch (err) {
+      return { ok: false, error: err.message, code: err.code || null, status: err.status || null };
+    }
+  };
+  ipcMain.handle('g:status', wrap(() => google.status()));
+  ipcMain.handle('g:setClient', wrap((id, secret) => google.setClient(id, secret)));
+  ipcMain.handle(
+    'g:connect',
+    wrap(async () => {
+      const s = await google.connect();
+      if (win) {
+        if (win.isMinimized()) win.restore();
+        win.focus();
+      }
+      return s;
+    })
+  );
+  ipcMain.handle('g:disconnect', wrap(() => google.disconnect()));
+  ipcMain.handle('g:calendars', wrap(() => google.listCalendars()));
+  ipcMain.handle('g:events', wrap((cal, a, b) => google.listEvents(cal, a, b)));
+  ipcMain.handle('g:insert', wrap((cal, ev) => google.insertEvent(cal, ev)));
+  ipcMain.handle('g:patch', wrap((cal, id, ev) => google.patchEvent(cal, id, ev)));
+  ipcMain.handle('g:delete', wrap((cal, id) => google.deleteEvent(cal, id)));
+
+  createWindow();
+  setupAutoUpdate();
+});
+
+/* ───────────── 자동 업데이트 (GitHub 릴리스) ───────────── */
+let updateState = { status: 'idle', version: null, error: null };
+function sendUpdate() {
+  if (win && !win.isDestroyed()) win.webContents.send('update:state', updateState);
+}
+function setupAutoUpdate() {
+  ipcMain.handle('update:state', () => updateState);
+  if (!app.isPackaged) {
+    updateState = { status: 'dev', version: null, error: null };
+    ipcMain.handle('update:check', () => updateState);
+    ipcMain.handle('update:install', () => false);
+    return;
+  }
+  const { autoUpdater } = require('electron-updater');
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true; // 받아 둔 업데이트는 프로그램을 닫을 때 자동 설치
+  autoUpdater.on('checking-for-update', () => {
+    updateState = { ...updateState, status: 'checking', error: null };
+    sendUpdate();
+  });
+  autoUpdater.on('update-available', (i) => {
+    updateState = { status: 'downloading', version: i.version, error: null };
+    sendUpdate();
+  });
+  autoUpdater.on('update-not-available', () => {
+    updateState = { status: 'latest', version: app.getVersion(), error: null };
+    sendUpdate();
+  });
+  autoUpdater.on('update-downloaded', (i) => {
+    updateState = { status: 'ready', version: i.version, error: null };
+    sendUpdate();
+  });
+  autoUpdater.on('error', (e) => {
+    updateState = { ...updateState, status: 'error', error: e?.message || String(e) };
+    sendUpdate();
+  });
+  const check = () => autoUpdater.checkForUpdates().catch(() => {});
+  ipcMain.handle('update:check', async () => {
+    await check();
+    return updateState;
+  });
+  ipcMain.handle('update:install', () => {
+    if (updateState.status !== 'ready') return false;
+    setImmediate(() => autoUpdater.quitAndInstall(true, true)); // 조용히 설치 후 다시 실행
+    return true;
+  });
+  setTimeout(check, 8000);
+  setInterval(check, 4 * 3600 * 1000);
+}
+
+app.on('window-all-closed', () => app.quit());
