@@ -28,7 +28,8 @@ jobs:
         run: |
           V=$(node -p "require('./package.json').version")
           echo "version=$V" >> "$GITHUB_OUTPUT"
-          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/v$V" >/dev/null 2>&1; then  # 게시된 릴리스만 조회됨(초안 제외)
+          # 게시된 릴리스가 있고 업데이트 정보(latest.yml)까지 올라가 있으면 완료된 버전
+          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/v$V" --jq '.assets[].name' 2>/dev/null | grep -qx latest.yml; then
             echo "v$V 릴리스가 이미 있어 빌드를 건너뜁니다."
             echo "build=false" >> "$GITHUB_OUTPUT"
           else
@@ -56,10 +57,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           V="${{ steps.ver.outputs.version }}"
-          # 실패한 이전 시도가 남긴 같은 버전의 초안이 있으면 정리
-          gh api "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.draft and (.tag_name==\"v$V\" or .name==\"$V\")) | .id" \
+          # 실패한 이전 시도가 남긴 같은 버전의 릴리스(초안·불완전 게시)와 태그를 정리
+          gh api "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name==\"v$V\" or .name==\"$V\") | .id" \
             | while read -r id; do gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"; done
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/v$V" 2>/dev/null || true
           gh release create "v$V" \
             "dist/ScheduleTodo-Setup-$V.exe" "dist/ScheduleTodo-Setup-$V.exe.blockmap" dist/latest.yml \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$V" \
-            --notes "$(git log -1 --pretty=%B | grep -v -E '^(Co-Authored-By|Claude-Session):')" --latest
+            --notes-file RELEASE_NOTES.md --latest
