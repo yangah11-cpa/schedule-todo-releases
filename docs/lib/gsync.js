@@ -7,7 +7,8 @@ const FREQ = { daily: 'DAILY', weekly: 'WEEKLY', monthly: 'MONTHLY', yearly: 'YE
 
 export function timeRange(date, endDate, ev) {
   if (ev.allDay) {
-    return { start: { date }, end: { date: addDays(endDate, 1) } };
+    // 수정(PATCH) 때 이전 시간 값이 남지 않도록 반대쪽 필드는 null로 지운다
+    return { start: { date, dateTime: null, timeZone: null }, end: { date: addDays(endDate, 1), dateTime: null, timeZone: null } };
   }
   let st = ev.startTime || '09:00';
   let et = ev.endTime || st;
@@ -17,8 +18,8 @@ export function timeRange(date, endDate, ev) {
     et = `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
   }
   return {
-    start: { dateTime: `${date}T${st}:00`, timeZone: TZ },
-    end: { dateTime: `${ed}T${et}:00`, timeZone: TZ },
+    start: { date: null, dateTime: `${date}T${st}:00`, timeZone: TZ }, // 종일 → 시간 일정으로 바꿀 때 종일 날짜 제거
+    end: { date: null, dateTime: `${ed}T${et}:00`, timeZone: TZ },
   };
 }
 
