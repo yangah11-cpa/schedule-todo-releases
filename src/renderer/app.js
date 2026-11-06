@@ -930,15 +930,6 @@ function openEventDialog({ ev = null, g = null, date = null, occ = null } = {}) 
       ${readonly ? '<div class="note">읽기 전용 캘린더의 일정입니다.</div>' : ''}
       <div class="fld"><label class="lbl" for="e-title">제목</label><input class="inp" id="e-title" value="${h(f.title)}" ${readonly ? 'disabled' : ''}></div>
       ${
-        ext
-          ? ''
-          : `<div class="fld"><span class="lbl">날짜 기준</span>
-        <div class="radio2 lunar" role="radiogroup">
-          <label class="${!isL ? 'on' : ''}"><input type="radio" name="caltype" value="solar" ${!isL ? 'checked' : ''}>양력</label>
-          <label class="${isL ? 'on l' : ''}"><input type="radio" name="caltype" value="lunar" ${isL ? 'checked' : ''} style="accent-color:var(--lunar)">음력</label>
-        </div></div>`
-      }
-      ${
         isL
           ? `<div class="grid3" style="grid-template-columns: 1.1fr 1fr 1fr auto">
               <div class="fld"><label class="lbl" for="e-ly">${f.repeat === 'lunarYearly' ? '시작 연도' : '연도'}</label><select class="inp" id="e-ly">${sel(yearOpts, f.lYear)}</select></div>
@@ -951,6 +942,30 @@ function openEventDialog({ ev = null, g = null, date = null, occ = null } = {}) 
               <div class="fld"><label class="lbl" for="e-end">종료일</label><input type="date" class="inp" id="e-end" value="${f.endDate}" min="${f.date}" ${readonly || recurringExt ? 'disabled' : ''}></div>
             </div>`
       }
+      ${
+        auto.from
+          ? `<div class="note" id="e-autonote">이전 일정 "${h(auto.from)}"을(를) 참고해 ${[auto.filledPlace && '장소', auto.filledPeople && '참여 인원'].filter(Boolean).join('·')}을(를) 채웠습니다. <button type="button" class="linkbtn" data-autoclear>지우기</button></div>`
+          : ''
+      }
+      <div class="fld"><label class="lbl" for="e-place">장소</label><input class="inp" id="e-place" list="dl-places" value="${h(f.place)}" placeholder="장소 또는 주소" ${readonly ? 'disabled' : ''}>
+        <datalist id="dl-places">${knownPlaces().map((p) => `<option value="${h(p)}"></option>`).join('')}</datalist></div>
+      <div class="fld"><label class="lbl" for="e-people">참여 인원</label>
+        <div class="chipsbox" id="e-chips">${f.people
+          .map((p, i) => `<span class="person">${h(p)}${readonly ? '' : `<button type="button" data-rmp="${i}" aria-label="${h(p)} 삭제">×</button>`}</span>`)
+          .join('')}${readonly ? '' : '<input id="e-people" list="dl-people" placeholder="이름 입력 후 Enter">'}</div>
+        <datalist id="dl-people">${knownPeople().filter((p) => !f.people.includes(p)).map((p) => `<option value="${h(p)}"></option>`).join('')}</datalist>
+        ${f.calendarId !== 'local' ? '<span class="note">장소와 참여 인원은 Google 일정의 설명란에 함께 기록됩니다 (초대는 보내지 않음).</span>' : ''}
+      </div>
+      ${
+        ext
+          ? ''
+          : `<div class="grid2">
+              <div class="fld"><label class="lbl" for="e-rep">반복</label><select class="inp" id="e-rep">${sel(repOpts, f.repeat)}</select></div>
+              <div class="fld"><label class="lbl" for="e-alarm">알림</label><select class="inp" id="e-alarm">${sel(f.allDay ? ALARMS_ALLDAY : ALARMS_TIMED, f.alarm)}</select></div>
+            </div>
+            ${isL ? `<div class="preview" id="e-prev">${lunarPreview()}</div>` : ''}`
+      }
+      ${ev && ev.repeat !== 'none' ? '<div class="note">반복 일정을 수정하면 반복 전체에 적용됩니다.</div>' : ''}
       <div class="grid2" style="align-items:end">
         <div class="fld"><span class="lbl">시간</span>
           <label class="checkline boxed"><input type="checkbox" id="e-allday" ${f.allDay ? 'checked' : ''} ${readonly || recurringExt ? 'disabled' : ''}>종일</label>
@@ -968,28 +983,13 @@ function openEventDialog({ ev = null, g = null, date = null, occ = null } = {}) 
       ${
         ext
           ? ''
-          : `<div class="grid2">
-              <div class="fld"><label class="lbl" for="e-rep">반복</label><select class="inp" id="e-rep">${sel(repOpts, f.repeat)}</select></div>
-              <div class="fld"><label class="lbl" for="e-alarm">알림</label><select class="inp" id="e-alarm">${sel(f.allDay ? ALARMS_ALLDAY : ALARMS_TIMED, f.alarm)}</select></div>
-            </div>
-            ${isL ? `<div class="preview" id="e-prev">${lunarPreview()}</div>` : ''}`
+          : `<div class="fld"><span class="lbl">날짜 기준</span>
+        <div class="radio2 lunar" role="radiogroup">
+          <label class="${!isL ? 'on' : ''}"><input type="radio" name="caltype" value="solar" ${!isL ? 'checked' : ''}>양력</label>
+          <label class="${isL ? 'on l' : ''}"><input type="radio" name="caltype" value="lunar" ${isL ? 'checked' : ''} style="accent-color:var(--lunar)">음력</label>
+        </div></div>`
       }
-      ${ev && ev.repeat !== 'none' ? '<div class="note">반복 일정을 수정하면 반복 전체에 적용됩니다.</div>' : ''}
       ${ev?.syncError ? `<div class="warn">Google 동기화 대기 중: ${h(ev.syncError)}</div>` : ''}
-      ${
-        auto.from
-          ? `<div class="note" id="e-autonote">이전 일정 "${h(auto.from)}"을(를) 참고해 ${[auto.filledPlace && '장소', auto.filledPeople && '참여 인원'].filter(Boolean).join('·')}을(를) 채웠습니다. <button type="button" class="linkbtn" data-autoclear>지우기</button></div>`
-          : ''
-      }
-      <div class="fld"><label class="lbl" for="e-place">장소</label><input class="inp" id="e-place" list="dl-places" value="${h(f.place)}" placeholder="장소 또는 주소" ${readonly ? 'disabled' : ''}>
-        <datalist id="dl-places">${knownPlaces().map((p) => `<option value="${h(p)}"></option>`).join('')}</datalist></div>
-      <div class="fld"><label class="lbl" for="e-people">참여 인원</label>
-        <div class="chipsbox" id="e-chips">${f.people
-          .map((p, i) => `<span class="person">${h(p)}${readonly ? '' : `<button type="button" data-rmp="${i}" aria-label="${h(p)} 삭제">×</button>`}</span>`)
-          .join('')}${readonly ? '' : '<input id="e-people" list="dl-people" placeholder="이름 입력 후 Enter">'}</div>
-        <datalist id="dl-people">${knownPeople().filter((p) => !f.people.includes(p)).map((p) => `<option value="${h(p)}"></option>`).join('')}</datalist>
-        ${f.calendarId !== 'local' ? '<span class="note">장소와 참여 인원은 Google 일정의 설명란에 함께 기록됩니다 (초대는 보내지 않음).</span>' : ''}
-      </div>
       <div class="fld"><label class="lbl" for="e-memo">메모</label><textarea class="inp" id="e-memo" rows="3" ${readonly ? 'disabled' : ''}>${h(f.memo)}</textarea></div>
       ${
         ext
