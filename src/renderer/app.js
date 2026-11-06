@@ -2466,7 +2466,39 @@ async function importTeam() {
   // 팀원 일정은 이 PC에만 보관 (오른쪽 클릭으로 보기)
   S.data.team = { fileName: r.data.fileName, importedAt: Date.now(), parsed };
   save();
+  uploadTeamForPhone();
   previewTeamImport(parsed, me);
+}
+
+/** 팀 일정표를 휴대폰 앱에서 볼 수 있게 Google Tasks 연결 목록에 압축해서 올림 (캘린더에는 등록하지 않음) */
+async function uploadTeamForPhone() {
+  const t = S.data.team;
+  if (!t || !S.g.connected || !S.g.tasks) return;
+  const names = [];
+  const entries = [];
+  const dd = (d) => d.replace(/-/g, '');
+  for (const p of t.parsed) {
+    for (const person of p.people) {
+      let ni = names.indexOf(person.name);
+      if (ni < 0) ni = names.push(person.name) - 1;
+      for (const e of person.entries) entries.push([ni, e.text, dd(e.start), dd(e.end), e.lead ? 1 : 0]);
+    }
+  }
+  const blob = JSON.stringify({
+    v: 1,
+    me: settings().teamMe,
+    file: t.fileName,
+    asOf: t.parsed.map((p) => p.asOf).filter(Boolean)[0] || null,
+    from: t.parsed.reduce((a, p) => (!a || p.from < a ? p.from : a), null),
+    to: t.parsed.reduce((a, p) => (!a || p.to > a ? p.to : a), null),
+    names,
+    e: entries,
+  });
+  const r = await window.api.push.saveBlob('팀 일정표', blob);
+  if (r.ok) {
+    t.uploadedAt = Date.now();
+    save();
+  }
 }
 
 function previewTeamImport(parsed, me) {
@@ -3004,7 +3036,10 @@ async function init() {
     toast(`변경사항(${v})이 준비되었습니다. 상단의 "변경사항 적용"을 누르면 바로 반영됩니다.`);
   });
   if (S.g.connected) refreshGoogle();
-  if (S.g.connected && S.g.tasks) window.api.push.init().catch(() => {});
+  if (S.g.connected && S.g.tasks) {
+    window.api.push.init().catch(() => {});
+    if (S.data.team && !S.data.team.uploadedAt) uploadTeamForPhone();
+  }
 
   let lastDay = D.today();
   setInterval(() => {

@@ -261,6 +261,7 @@ app.whenReady().then(() => {
     })
   );
   ipcMain.handle('push:notify', wrap((msg) => pushHub.notify(msg)));
+  ipcMain.handle('push:saveBlob', wrap((name, text) => pushHub.saveBlob(name, text)));
 
   createWindow();
   setupAutoUpdate();

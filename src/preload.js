@@ -12,7 +12,7 @@ contextBridge.exposeInMainWorld('api', {
   info: call('app:info'),
   focus: call('app:focus'),
   prefs: { get: call('prefs:get'), set: call('prefs:set') },
-  push: { init: call('push:init'), notify: call('push:notify') },
+  push: { init: call('push:init'), notify: call('push:notify'), saveBlob: call('push:saveBlob') },
   team: { open: call('team:open') },
   patch: {
     state: call('patch:state'),

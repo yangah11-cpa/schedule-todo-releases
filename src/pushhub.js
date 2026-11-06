@@ -126,6 +126,26 @@ class PushHub {
     return r.status;
   }
 
+  /** 휴대폰 앱에서 볼 데이터(팀 일정표 등)를 연결 목록에 나눠서 저장. 캘린더에는 올리지 않음 */
+  async saveBlob(name, text) {
+    const listId = await this._list(true);
+    const prefix = `${name} 데이터 (`;
+    const items = await this._items(listId);
+    for (const t of items.filter((x) => (x.title || '').startsWith(prefix) && !x.deleted)) {
+      await this.google.tasks('DELETE', `/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(t.id)}`).catch(() => {});
+    }
+    const size = 7000; // Google Tasks 메모 한도(8,192자) 안에서 나눔
+    const parts = [];
+    for (let i = 0; i < text.length; i += size) parts.push(text.slice(i, i + size));
+    for (let i = 0; i < parts.length; i++) {
+      await this.google.tasks('POST', `/lists/${encodeURIComponent(listId)}/tasks`, {
+        title: `${prefix}${i + 1}/${parts.length}) — 지우지 마세요`,
+        notes: parts[i],
+      });
+    }
+    return parts.length;
+  }
+
   /** 연결된 모든 휴대폰으로 알림 보내기 */
   async notify(msg) {
     const devs = await this.devices();
