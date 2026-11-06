@@ -342,7 +342,15 @@ function setupAutoUpdate() {
     sendUpdate();
   });
   autoUpdater.on('update-downloaded', (i) => {
-    updateState = { status: 'ready', version: i.version, error: null };
+    const newer = global.__patchNewer || ((a, b) => a !== b);
+    if (!newer(i.version, appInfo().version)) {
+      // 이미 같은(또는 더 새) 버전이 즉시 적용으로 실행 중 → 설치하지 않음
+      autoUpdater.autoInstallOnAppQuit = false;
+      updateState = { status: 'latest', version: appInfo().version, error: null };
+    } else {
+      autoUpdater.autoInstallOnAppQuit = true;
+      updateState = { status: 'ready', version: i.version, error: null };
+    }
     sendUpdate();
   });
   autoUpdater.on('error', (e) => {
@@ -355,7 +363,8 @@ function setupAutoUpdate() {
     return updateState;
   });
   ipcMain.handle('update:install', () => {
-    if (updateState.status !== 'ready') return false;
+    const newer = global.__patchNewer || ((a, b) => a !== b);
+    if (updateState.status !== 'ready' || !newer(updateState.version, appInfo().version)) return false;
     quitting = true;
     setImmediate(() => autoUpdater.quitAndInstall(true, true)); // 조용히 설치 후 다시 실행
     return true;

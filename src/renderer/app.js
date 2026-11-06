@@ -578,7 +578,16 @@ function renderUpdate() {
     b.textContent = `변경사항 적용 (${S.patchReady})`;
     b.title = '프로그램을 다시 시작해 새 변경사항을 적용합니다.';
   } else {
-    b.hidden = u.status !== 'ready';
+    // 이미 같은 버전이 적용되어 있으면 설치 버튼 숨김
+    const cur = S.appVersion || '0';
+    const vnum = (v) => String(v || '0').split('.').map((n) => parseInt(n, 10) || 0);
+    const gt = (a, b) => {
+      const x = vnum(a);
+      const y = vnum(b);
+      for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+      return false;
+    };
+    b.hidden = u.status !== 'ready' || !gt(u.version, cur);
     b.textContent = `새 버전 ${u.version || ''} 설치`;
     b.title = '프로그램을 다시 시작하면서 업데이트합니다. 지금 누르지 않아도 프로그램을 닫을 때 자동으로 설치됩니다.';
   }
@@ -2122,8 +2131,8 @@ async function openSettings() {
         </div>
         <span class="note">${
           S.data.team
-            ? `마지막 가져오기: ${h(S.data.team.fileName)} (${h(S.data.team.parsed.map((p) => p.asOf || '').filter(Boolean).join(', ') || '기준일 없음')} 기준) · 달력에서 오른쪽 클릭 → "팀원 일정 보기"`
-            : '내가 참여하는 일정만 참여 인원과 함께 캘린더에 등록하고, 나머지 팀원 일정은 이 PC에만 보관합니다.'
+            ? `마지막 가져오기: ${h(S.data.team.fileName)} (${h(S.data.team.parsed.map((p) => p.asOf || '').filter(Boolean).join(', ') || '기준일 없음')} 기준) · 달력 날짜를 오른쪽 클릭하면 팀원 일정`
+            : '내가 참여하는 일정만 참여 인원과 함께 캘린더에 등록하고, 나머지 팀원 일정은 이 PC에만 보관합니다. 달력 날짜를 오른쪽 클릭하면 팀원 일정을 볼 수 있습니다.'
         }</span>
       </section>
       <section class="sect"><h2>시작·알림</h2>
@@ -2655,7 +2664,7 @@ function openContextMenu(x, y, date) {
 function openTeamView(date) {
   const team = S.data.team?.parsed;
   if (!team) {
-    toast('먼저 팀 일정표 엑셀을 가져오세요. (오른쪽 클릭 → 팀 일정표 가져오기)');
+    toast('먼저 상단의 "팀 일정 등록"으로 팀 일정표 엑셀을 가져오세요.');
     return;
   }
   let cur = date;
@@ -2708,9 +2717,11 @@ function openTeamView(date) {
 
 function bindDrag() {
   const body = $('#calBody');
+  // 날짜에서 오른쪽 클릭 → 팀원 일정 보기
   body.addEventListener('contextmenu', (e) => {
     e.preventDefault();
-    openContextMenu(e.clientX, e.clientY, dateAtPoint(e.clientX, e.clientY));
+    const d = dateAtPoint(e.clientX, e.clientY);
+    if (d) openTeamView(d);
   });
   body.addEventListener('dragstart', (e) => {
     const chip = e.target.closest('[data-item][draggable="true"]');
@@ -2771,6 +2782,7 @@ function bind() {
       maybeRefresh();
     };
   });
+  $('#btnTeamImport').onclick = () => importTeam();
   $('#btnAddEvent').onclick = () => openEventDialog({ date: S.view === 'month' && S.cursor.slice(0, 7) !== D.today().slice(0, 7) ? S.cursor : S.view === 'month' ? D.today() : S.cursor });
   $('#btnSync').onclick = () => {
     S.gRange = null;
@@ -2956,6 +2968,7 @@ async function init() {
   if (ensureFixed()) save();
   bind();
   renderAll();
+  S.appVersion = await window.api.version();
   S.update = await window.api.update.state();
   renderUpdate();
   window.api.update.onState((u) => {
