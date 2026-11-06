@@ -132,7 +132,9 @@ async function api(base, path, { method = 'GET', body } = {}) {
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
     if ((r.status === 404 || r.status === 410) && method === 'DELETE') return null;
-    throw Object.assign(new Error(j.error?.message || `오류 (${r.status})`), { status: r.status });
+    const e = j.error || {};
+    const why = (e.details || []).find((x) => x.reason)?.reason || e.errors?.[0]?.reason || e.status || null;
+    throw Object.assign(new Error(e.message || `오류 (${r.status})`), { status: r.status, why });
   }
   return j;
 }
@@ -263,18 +265,29 @@ async function loadTeam() {
   try {
     const q = new URLSearchParams({ spaces: 'appDataFolder', q: "name='team-schedule.json'", fields: 'files(id,modifiedTime)' });
     let list;
+    S.teamErr = null;
     try {
       list = await api(DRIVE, `/files?${q}`);
       S.teamNeedsAuth = false;
     } catch (e) {
-      if (e.status === 403) S.teamNeedsAuth = true; // 예전에 로그인해서 드라이브 권한이 없음
+      if (e.code === 'auth') return;
+      if (e.why === 'SERVICE_DISABLED' || e.why === 'accessNotConfigured')
+        S.teamErr = 'Google Drive API가 꺼져 있습니다. Google Cloud 콘솔에서 Google Drive API를 "사용"으로 켜 주세요.';
+      else if (e.status === 403 || e.status === 401) S.teamNeedsAuth = true; // 드라이브 권한이 아직 없음
+      else S.teamErr = `팀 일정을 불러오지 못했습니다: ${e.message}`;
       return;
     }
     const f = list.files?.[0];
-    if (!f) return;
+    if (!f) {
+      S.teamErr = 'PC에서 보낸 팀 일정이 아직 없습니다. PC 프로그램 설정 → 팀 일정표 → "다시 보내기"를 눌러 주세요.';
+      return;
+    }
     if (S.team && S.team.modified === f.modifiedTime) return; // 바뀌지 않았으면 다시 받지 않음
     const r = await fetch(`${DRIVE}/files/${encodeURIComponent(f.id)}?alt=media`, { headers: { Authorization: `Bearer ${token.v}` } });
-    if (!r.ok) return;
+    if (!r.ok) {
+      S.teamErr = `팀 일정을 받지 못했습니다 (${r.status}).`;
+      return;
+    }
     const d = await r.json();
     const dt = (x) => `${x.slice(0, 4)}-${x.slice(4, 6)}-${x.slice(6, 8)}`;
     S.team = {
@@ -486,8 +499,9 @@ function renderTeamWeek(days) {
   let html = '<div class="team"><div class="team-h"><b>팀 일정</b>';
   if (S.teamNeedsAuth && !t)
     return `${html}</div><div class="empty small">팀 일정을 보려면 권한을 한 번 더 허용해 주세요.<br><button type="button" class="btn primary" data-reauth style="margin-top:10px">권한 허용</button></div></div>`;
-  if (!t) return `${html}</div><div class="empty small">PC 프로그램에서 팀 일정표를 가져오면 여기에 표시됩니다.</div></div>`;
+  if (!t) return `${html}</div><div class="empty small">${h(S.teamErr || 'PC 프로그램에서 팀 일정표를 가져오면 여기에 표시됩니다.')}</div></div>`;
   html += `<span class="xs muted">${t.asOf ? `${D.parts(t.asOf).m}/${D.parts(t.asOf).d} 현재` : ''}</span></div>`;
+  if (S.teamErr) html += `<div class="note" style="color:var(--sun);padding:0 4px 6px">${h(S.teamErr)}</div>`;
   const wd = days.slice(0, 5);
   const ws = wd[0];
   const we = wd[4];

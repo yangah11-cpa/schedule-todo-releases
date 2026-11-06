@@ -19,6 +19,23 @@ const DRIVE_API = DEV ? `${DEV}/drive/v3` : 'https://www.googleapis.com/drive/v3
 const DRIVE_UPLOAD = DEV ? `${DEV}/upload/drive/v3` : 'https://www.googleapis.com/upload/drive/v3';
 
 class GoogleCalendar {
+  /** Google 오류 응답의 원인 코드 (API 꺼짐 / 권한 부족 등) */
+  static reason(j) {
+    const e = j?.error || {};
+    const d = (e.details || []).find((x) => x.reason)?.reason;
+    return d || e.errors?.[0]?.reason || e.status || null;
+  }
+  /** 사용자가 바로 조치할 수 있는 한국어 오류 문구 */
+  static explain(j, status, base = '') {
+    const why = GoogleCalendar.reason(j);
+    const api = /drive/.test(base) ? 'Google Drive API' : /tasks/.test(base) ? 'Tasks API' : 'Google Calendar API';
+    if (why === 'SERVICE_DISABLED' || why === 'accessNotConfigured')
+      return `${api}가 꺼져 있습니다. Google Cloud 콘솔에서 ${api}를 "사용"으로 켜 주세요. (켠 뒤 몇 분 걸릴 수 있음)`;
+    if (why === 'ACCESS_TOKEN_SCOPE_INSUFFICIENT' || why === 'insufficientPermissions')
+      return `${api} 권한이 승인되지 않았습니다. 설정에서 Google을 다시 연결하고 모든 항목을 허용해 주세요.`;
+    return j?.error?.message || `Google API 오류 (${status})`;
+  }
+
   constructor(dir) {
     this.file = path.join(dir, 'google-auth.dat');
     this.state = this._load(); // { clientId, clientSecret, refreshToken, account }
@@ -212,8 +229,9 @@ class GoogleCalendar {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) {
       if ((r.status === 404 || r.status === 410) && method === 'DELETE') return null; // 이미 삭제됨
-      const err = new Error(j.error?.message || `Google API 오류 (${r.status})`);
+      const err = new Error(GoogleCalendar.explain(j, r.status, base));
       err.status = r.status;
+      err.code = GoogleCalendar.reason(j);
       throw err;
     }
     return j;
@@ -231,7 +249,10 @@ class GoogleCalendar {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
         body: text,
       });
-      if (!r.ok) throw Object.assign(new Error(`드라이브 저장 실패 (${r.status})`), { status: r.status });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw Object.assign(new Error(GoogleCalendar.explain(j, r.status, DRIVE_API)), { status: r.status, code: GoogleCalendar.reason(j) });
+      }
       return id;
     }
     const boundary = `st${Date.now()}`;
@@ -245,7 +266,7 @@ class GoogleCalendar {
       body: Buffer.from(body, 'utf8'),
     });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw Object.assign(new Error(j.error?.message || `드라이브 저장 실패 (${r.status})`), { status: r.status });
+    if (!r.ok) throw Object.assign(new Error(GoogleCalendar.explain(j, r.status, DRIVE_API)), { status: r.status, code: GoogleCalendar.reason(j) });
     return j.id;
   }
 

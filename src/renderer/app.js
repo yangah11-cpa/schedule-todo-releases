@@ -2140,6 +2140,18 @@ async function openSettings() {
             ? `마지막 가져오기: ${h(S.data.team.fileName)} (${h(S.data.team.parsed.map((p) => p.asOf || '').filter(Boolean).join(', ') || '기준일 없음')} 기준) · 달력 날짜를 오른쪽 클릭하면 팀원 일정`
             : '내가 참여하는 일정만 참여 인원과 함께 캘린더에 등록하고, 나머지 팀원 일정은 이 PC에만 보관합니다. 달력 날짜를 오른쪽 클릭하면 팀원 일정을 볼 수 있습니다.'
         }</span>
+        ${
+          S.data.team
+            ? `<div class="row gap8 wrap" style="margin-top:6px">
+                 <span class="small" style="font-weight:600">휴대폰 앱으로 보내기</span>
+                 <span id="s-teamphone" class="small ${phoneShareText().cls}">${h(phoneShareText().text)}</span>
+                 <div class="spacer"></div>
+                 ${S.g.connected && !S.g.drive ? '<button type="button" class="btn" data-greconnect>드라이브 권한 추가 (다시 연결)</button>' : ''}
+                 <button type="button" class="btn" data-teamsend>다시 보내기</button>
+               </div>
+               <span class="note">구글 드라이브의 이 앱 전용 숨김 공간에만 올라가며, 캘린더·드라이브 목록에는 보이지 않습니다. Google Cloud 콘솔에서 <button type="button" class="linkbtn" data-ext="https://console.cloud.google.com/apis/library/drive.googleapis.com">Google Drive API</button>가 "사용"이어야 합니다.</span>`
+            : ''
+        }
       </section>
       <section class="sect"><h2>시작·알림</h2>
         <label class="checkline small"><input type="checkbox" id="s-autostart" ${prefs.autoStart ? 'checked' : ''}>Windows 시작 시 자동 실행 (트레이에서 조용히 시작)</label>
@@ -2227,6 +2239,12 @@ async function openSettings() {
       draw();
       toast('Google 캘린더가 연결되었습니다.');
     }
+    if (e.target.closest('[data-teamsend]')) {
+      const el = $('#s-teamphone', body);
+      if (el) el.textContent = '보내는 중…';
+      await uploadTeamForPhone(true);
+      return;
+    }
     if (e.target.closest('[data-teamimport]')) {
       close();
       importTeam();
@@ -2242,7 +2260,7 @@ async function openSettings() {
       }
       S.g = r.data;
       draw();
-      if (S.g.drive && S.data.team) uploadTeamForPhone();
+      if (S.data.team) uploadTeamForPhone(true);
       if (S.g.tasks) {
         toast('권한이 추가되었습니다.');
         await syncTasks();
@@ -2473,14 +2491,24 @@ async function importTeam() {
   // 팀원 일정은 이 PC에만 보관 (오른쪽 클릭으로 보기)
   S.data.team = { fileName: r.data.fileName, importedAt: Date.now(), parsed };
   save();
-  uploadTeamForPhone();
+  uploadTeamForPhone(true);
   previewTeamImport(parsed, me);
 }
 
 /** 팀 일정표를 휴대폰 앱에서 볼 수 있게 구글 드라이브의 앱 전용 숨김 공간에 올림 (캘린더·Tasks에는 올리지 않음) */
-async function uploadTeamForPhone() {
+async function uploadTeamForPhone(manual = false, quiet = false) {
   const t = S.data.team;
-  if (!t || !S.g.connected || !S.g.drive) return;
+  if (!t) return;
+  const fail = (msg) => {
+    t.phone = { ok: false, at: Date.now(), error: msg };
+    t.uploadedAt = null;
+    save();
+    if (!quiet) toast(`팀 일정을 휴대폰으로 보내지 못했습니다: ${msg}`);
+    renderPhoneShare();
+  };
+  if (!S.g.connected) return fail('Google에 연결되어 있지 않습니다. 설정에서 Google을 연결해 주세요.');
+  if (!S.g.drive)
+    return fail('드라이브 권한이 없습니다. 설정 → "드라이브 권한 추가 (다시 연결)"을 누르고 모든 항목을 허용해 주세요.');
   const names = [];
   const entries = [];
   const dd = (d) => d.replace(/-/g, '');
@@ -2502,10 +2530,30 @@ async function uploadTeamForPhone() {
     e: entries,
   });
   const r = await window.api.drive.save('team-schedule.json', blob);
-  if (r.ok) {
-    t.uploadedAt = Date.now();
-    save();
-  } else toast(`팀 일정을 휴대폰용으로 올리지 못했습니다: ${r.error}`);
+  if (!r.ok) return fail(r.error);
+  t.uploadedAt = Date.now();
+  t.phone = { ok: true, at: t.uploadedAt };
+  save();
+  if (manual) toast('팀 일정을 휴대폰으로 보냈습니다. 휴대폰 앱에서 새로고침하세요.');
+  renderPhoneShare();
+}
+
+/** 설정 화면의 "휴대폰으로 팀 일정 보내기" 상태 줄 */
+function phoneShareText() {
+  const t = S.data.team;
+  if (!t) return { cls: 'muted', text: '가져온 팀 일정표가 없습니다.' };
+  const p = t.phone;
+  const when = (x) => new Date(x).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  if (p?.ok || (t.uploadedAt && !p)) return { cls: 'muted', text: `보냄: ${when(p?.at || t.uploadedAt)} (${t.fileName || '팀 일정표'})` };
+  if (p && !p.ok) return { cls: 'err', text: `보내지 못함: ${p.error}` };
+  return { cls: 'muted', text: '아직 보내지 않았습니다.' };
+}
+function renderPhoneShare() {
+  const el = document.getElementById('s-teamphone');
+  if (!el) return;
+  const x = phoneShareText();
+  el.className = `small ${x.cls}`;
+  el.textContent = x.text;
 }
 
 function previewTeamImport(parsed, me) {
@@ -3046,8 +3094,8 @@ async function init() {
   if (S.g.connected && S.g.tasks) {
     window.api.push.init().catch(() => {});
   }
-  if (S.g.connected && S.g.drive && S.data.team && !S.data.team.uploadedAt) {
-    uploadTeamForPhone();
+  if (S.g.connected && S.data.team && !S.data.team.uploadedAt) {
+    uploadTeamForPhone(false, true); // 아직 휴대폰으로 못 보냈으면 시작할 때 다시 시도
   }
 
   let lastDay = D.today();

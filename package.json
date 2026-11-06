@@ -1,7 +1,7 @@
 {
   "name": "schedule-todo",
   "productName": "일정할일",
-  "version": "1.0.17",
+  "version": "1.0.18",
   "description": "일정 & 할일 — 구글 캘린더 연동, 음력 반복, 반복·하위 할 일",
   "main": "src/boot.js",
   "author": "양하승",
