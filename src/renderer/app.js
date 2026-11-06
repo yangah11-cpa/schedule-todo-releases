@@ -135,7 +135,7 @@ function collectItems(from, to) {
         allDay: ev.allDay,
         startTime: ev.startTime,
         cls: ev.calType === 'lunar' ? 'l' : ev.calendarId === 'local' ? 'c' : 'g',
-        color: ev.calendarId !== 'local' && ev.calType !== 'lunar' ? calendarColor(ev.calendarId) : null,
+        color: null, // Google 일정은 캘린더 고유색 대신 파란색 계열로 통일
         lunar: ev.calType === 'lunar',
         lunarRepeat: ev.repeat === 'lunarYearly',
         pending: ev.calendarId !== 'local' && ev.sync === 'pending',
@@ -153,7 +153,7 @@ function collectItems(from, to) {
         add({ kind: 'holiday', date: g.date, endDate: g.endDate, title: g.title, allDay: true, cls: 'h', isPublic: !/기념일/.test(g.rawDesc || '') });
         continue;
       }
-      add({ kind: 'gevent', g, date: g.date, endDate: g.endDate, title: g.title, allDay: g.allDay, startTime: g.startTime, cls: 'g', color: g.color });
+      add({ kind: 'gevent', g, date: g.date, endDate: g.endDate, title: g.title, allDay: g.allDay, startTime: g.startTime, cls: 'g', color: null });
     }
   }
   if (settings().showHolidays && !googleHolidays) {
@@ -395,7 +395,7 @@ function renderCalendar() {
     const evs = list.filter((it) => it.kind === 'event' || it.kind === 'gevent');
     const tds = list.filter((it) => it.kind === 'todo');
     const color = (it) =>
-      it.cls === 'l' ? 'var(--lunar)' : it.cls === 'c' ? 'var(--local-ink)' : it.color || 'var(--accent)';
+      it.cls === 'l' ? 'var(--lunar)' : it.cls === 'c' ? 'var(--local-ink)' : 'var(--accent)';
     const meta = (it) => {
       const src = it.kind === 'event' ? it.ev : it.g;
       const parts = [];
@@ -542,9 +542,15 @@ const UPDATE_TEXT = {
 function renderUpdate() {
   const u = S.update || { status: 'idle' };
   const b = $('#btnUpdate');
-  b.hidden = u.status !== 'ready';
-  b.textContent = `새 버전 ${u.version || ''} 설치`;
-  b.title = '프로그램을 다시 시작하면서 업데이트합니다. 지금 누르지 않아도 프로그램을 닫을 때 자동으로 설치됩니다.';
+  if (S.patchReady) {
+    b.hidden = false;
+    b.textContent = `변경사항 적용 (${S.patchReady})`;
+    b.title = '프로그램을 다시 시작해 새 변경사항을 적용합니다.';
+  } else {
+    b.hidden = u.status !== 'ready';
+    b.textContent = `새 버전 ${u.version || ''} 설치`;
+    b.title = '프로그램을 다시 시작하면서 업데이트합니다. 지금 누르지 않아도 프로그램을 닫을 때 자동으로 설치됩니다.';
+  }
   const el = $('#updMsg');
   if (el) el.textContent = `${UPDATE_TEXT[u.status] || ''}${u.status === 'error' && u.error ? `: ${u.error}` : ''}${['downloading', 'ready'].includes(u.status) && u.version ? ` (${u.version})` : ''}`;
 }
@@ -1509,6 +1515,7 @@ async function deleteTodo(t) {
 async function openSettings() {
   const st = settings();
   const ver = await window.api.version();
+  const info = await window.api.info();
   const { el, close } = openModal(
     `<div class="mhead"><h1>설정</h1><button type="button" class="btn ghost icon" data-close aria-label="닫기">✕</button></div>
      <div class="mbody" id="setBody"></div>
@@ -1559,7 +1566,7 @@ async function openSettings() {
         <label class="checkline small"><input type="checkbox" id="s-lun" ${st.showLunar ? 'checked' : ''}>음력 날짜 표시</label>
       </section>
       <section class="sect"><h2>업데이트</h2>
-        <div class="row gap8 wrap"><span class="small">현재 버전 ${h(ver)}</span><button type="button" class="btn" data-updcheck>업데이트 확인</button><span class="small muted" id="updMsg"></span></div>
+        <div class="row gap8 wrap"><span class="small">현재 버전 ${h(ver)}${info?.source === 'patch' ? ` <span class="muted">(즉시 적용 · 설치본 ${h(info.bundledVersion)})</span>` : ''}</span><button type="button" class="btn" data-updcheck>업데이트 확인</button><span class="small muted" id="updMsg"></span></div>
         <span class="note">새 버전은 자동으로 내려받아 두었다가 프로그램을 닫을 때 설치됩니다.</span>
       </section>
       <section class="sect"><h2>데이터</h2>
@@ -1902,7 +1909,14 @@ async function init() {
     renderUpdate();
     if (u.status === 'ready' && was !== 'ready') toast(`새 버전 ${u.version}이 준비되었습니다. 프로그램을 닫으면 자동으로 설치됩니다.`);
   });
-  $('#btnUpdate').onclick = () => window.api.update.install();
+  $('#btnUpdate').onclick = () => (S.patchReady ? window.api.patch.apply() : window.api.update.install());
+  S.patchReady = await window.api.patch.state();
+  renderUpdate();
+  window.api.patch.onReady((v) => {
+    S.patchReady = v;
+    renderUpdate();
+    toast(`변경사항(${v})이 준비되었습니다. 상단의 "변경사항 적용"을 누르면 바로 반영됩니다.`);
+  });
   if (S.g.connected) refreshGoogle();
 
   let lastDay = D.today();

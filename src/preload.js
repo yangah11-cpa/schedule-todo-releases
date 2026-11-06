@@ -9,6 +9,12 @@ contextBridge.exposeInMainWorld('api', {
   importData: call('data:import'),
   openExternal: call('app:openExternal'),
   version: call('app:version'),
+  info: call('app:info'),
+  patch: {
+    state: call('patch:state'),
+    apply: call('patch:apply'),
+    onReady: (cb) => ipcRenderer.on('patch:ready', (_e, v) => cb(v)),
+  },
   update: {
     state: call('update:state'),
     check: call('update:check'),

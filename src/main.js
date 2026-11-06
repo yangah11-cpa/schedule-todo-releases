@@ -124,7 +124,8 @@ app.whenReady().then(() => {
   ipcMain.handle('app:openExternal', (_e, url) => {
     if (/^https:\/\//.test(url)) shell.openExternal(url);
   });
-  ipcMain.handle('app:version', () => app.getVersion());
+  ipcMain.handle('app:version', () => appInfo().version);
+  ipcMain.handle('app:info', () => appInfo());
 
   const wrap = (fn) => async (_e, ...args) => {
     try {
@@ -155,7 +156,38 @@ app.whenReady().then(() => {
 
   createWindow();
   setupAutoUpdate();
+  watchPatch();
 });
+
+/* ───────────── 즉시 적용 패치 감시 ───────────── */
+function appInfo() {
+  return global.__appInfo || { source: 'bundled', version: app.getVersion(), bundledVersion: app.getVersion(), patchDir: null };
+}
+let patchReady = null;
+function watchPatch() {
+  const info = appInfo();
+  if (!info.patchDir) return;
+  const newer = global.__patchNewer || ((a, b) => a !== b);
+  const pkg = path.join(info.patchDir, 'package.json');
+  const check = () => {
+    try {
+      const v = JSON.parse(fs.readFileSync(pkg, 'utf8')).version;
+      if (v && newer(v, info.version) && fs.existsSync(path.join(info.patchDir, 'src', 'main.js')) && patchReady !== v) {
+        patchReady = v;
+        if (win && !win.isDestroyed()) win.webContents.send('patch:ready', v);
+      }
+    } catch {
+      /* 패치 없음 */
+    }
+  };
+  ipcMain.handle('patch:state', () => patchReady);
+  ipcMain.handle('patch:apply', () => {
+    app.relaunch();
+    app.exit(0);
+  });
+  setInterval(check, 5000);
+  check();
+}
 
 /* ───────────── 자동 업데이트 (GitHub 릴리스) ───────────── */
 let updateState = { status: 'idle', version: null, error: null };
@@ -170,19 +202,34 @@ function setupAutoUpdate() {
     ipcMain.handle('update:install', () => false);
     return;
   }
-  const { autoUpdater } = require('electron-updater');
-  autoUpdater.autoDownload = true;
+  let autoUpdater;
+  try {
+    ({ autoUpdater } = require('electron-updater'));
+  } catch (e) {
+    updateState = { status: 'error', version: null, error: `업데이트 모듈 로드 실패: ${e.message}` };
+    ipcMain.handle('update:check', () => updateState);
+    ipcMain.handle('update:install', () => false);
+    return;
+  }
+  autoUpdater.autoDownload = false; // 즉시 적용 패치보다 새 버전일 때만 내려받음
   autoUpdater.autoInstallOnAppQuit = true; // 받아 둔 업데이트는 프로그램을 닫을 때 자동 설치
   autoUpdater.on('checking-for-update', () => {
     updateState = { ...updateState, status: 'checking', error: null };
     sendUpdate();
   });
   autoUpdater.on('update-available', (i) => {
+    const newer = global.__patchNewer || ((a, b) => a !== b);
+    if (!newer(i.version, appInfo().version)) {
+      updateState = { status: 'latest', version: appInfo().version, error: null };
+      sendUpdate();
+      return;
+    }
     updateState = { status: 'downloading', version: i.version, error: null };
     sendUpdate();
+    autoUpdater.downloadUpdate().catch(() => {});
   });
   autoUpdater.on('update-not-available', () => {
-    updateState = { status: 'latest', version: app.getVersion(), error: null };
+    updateState = { status: 'latest', version: appInfo().version, error: null };
     sendUpdate();
   });
   autoUpdater.on('update-downloaded', (i) => {
