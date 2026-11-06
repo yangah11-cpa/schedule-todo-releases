@@ -261,6 +261,7 @@ app.whenReady().then(() => {
     })
   );
   ipcMain.handle('push:notify', wrap((msg) => pushHub.notify(msg)));
+  ipcMain.handle('drive:save', wrap((name, text) => google.saveAppFile(name, text)));
 
   createWindow();
   setupAutoUpdate();

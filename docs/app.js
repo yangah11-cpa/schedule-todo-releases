@@ -38,7 +38,8 @@ function toast(msg) {
   toast.tm = setTimeout(() => t.classList.remove('show'), 2800);
 }
 
-const SCOPES = 'https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/tasks';
+const SCOPES = 'https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/tasks https://www.googleapis.com/auth/drive.appdata';
+const DRIVE = 'https://www.googleapis.com/drive/v3';
 const CAL = 'https://www.googleapis.com/calendar/v3';
 const TASKS = 'https://tasks.googleapis.com/tasks/v1';
 const TASK_LIST = '@default';
@@ -57,6 +58,7 @@ const S = {
   showDone: false,
   loading: false,
   hist: store.get('st.hist', {}),
+  team: store.get('st.team', null),
 };
 
 /* ───────────── 로그인 (Google Identity Services) ───────────── */
@@ -84,7 +86,7 @@ async function signIn(prompt = '') {
         pendingAuth = null;
         if (r.error) return p?.reject(new Error(r.error_description || r.error));
         if (!google.accounts.oauth2.hasGrantedAllScopes(r, ...SCOPES.split(' '))) {
-          return p?.reject(new Error('캘린더와 할 일 권한을 모두 허용해야 합니다.'));
+          return p?.reject(new Error('캘린더·할 일·앱 데이터 권한을 모두 허용해야 합니다.'));
         }
         token = { v: r.access_token, exp: Date.now() + (r.expires_in - 30) * 1000 };
         store.set('st.token', token);
@@ -187,12 +189,10 @@ async function afterLogin() {
 }
 
 /* ───────────── 데이터 불러오기 ───────────── */
+// 주간 보기: 월요일 시작
 function monthRange() {
-  const { y, m } = D.parts(S.cursor);
-  const first = D.make(y, m, 1);
-  const start = D.startOfWeek(first);
-  const weeks = Math.ceil((D.dow(first) + D.daysInMonth(y, m)) / 7);
-  return { from: start, to: D.addDays(start, weeks * 7 - 1), weeks };
+  const ws = D.addDays(S.cursor, -((D.dow(S.cursor) + 6) % 7));
+  return { from: ws, to: D.addDays(ws, 6) };
 }
 const calVisible = (c) => {
   const v = store.get('st.calVis', {})[c.id];
@@ -214,8 +214,8 @@ async function loadCalendars() {
 
 async function loadEvents() {
   const { from, to } = monthRange();
-  const a = D.addDays(from, -7);
-  const b = D.addDays(to, 7);
+  const a = D.addDays(from, -21);
+  const b = D.addDays(to, 21);
   const tMin = new Date(`${a}T00:00:00`).toISOString();
   const tMax = new Date(`${D.addDays(b, 1)}T00:00:00`).toISOString();
   const res = await Promise.all(
@@ -258,13 +258,48 @@ async function loadTasks() {
   store.set('st.tasks', S.tasks);
 }
 
+/* 팀 일정표: PC가 구글 드라이브의 앱 전용 숨김 공간에 올린 데이터를 읽음 (캘린더·Tasks에는 없음) */
+async function loadTeam() {
+  try {
+    const q = new URLSearchParams({ spaces: 'appDataFolder', q: "name='team-schedule.json'", fields: 'files(id,modifiedTime)' });
+    let list;
+    try {
+      list = await api(DRIVE, `/files?${q}`);
+      S.teamNeedsAuth = false;
+    } catch (e) {
+      if (e.status === 403) S.teamNeedsAuth = true; // 예전에 로그인해서 드라이브 권한이 없음
+      return;
+    }
+    const f = list.files?.[0];
+    if (!f) return;
+    if (S.team && S.team.modified === f.modifiedTime) return; // 바뀌지 않았으면 다시 받지 않음
+    const r = await fetch(`${DRIVE}/files/${encodeURIComponent(f.id)}?alt=media`, { headers: { Authorization: `Bearer ${token.v}` } });
+    if (!r.ok) return;
+    const d = await r.json();
+    const dt = (x) => `${x.slice(0, 4)}-${x.slice(4, 6)}-${x.slice(6, 8)}`;
+    S.team = {
+      modified: f.modifiedTime,
+      me: d.me,
+      file: d.file,
+      asOf: d.asOf,
+      from: d.from,
+      to: d.to,
+      names: d.names,
+      entries: d.e.map(([ni, text, a, b, lead]) => ({ name: d.names[ni], text, start: dt(a), end: dt(b), lead: !!lead })),
+    };
+    store.set('st.team', S.team);
+  } catch {
+    /* 팀 일정 없음 */
+  }
+}
+
 async function refreshAll() {
   if (!tokenOk()) return showGate(store.get('st.signedOnce') ? 'expired' : undefined);
   S.loading = true;
   $('#btnRefresh').classList.add('spin');
   try {
     await loadCalendars();
-    await Promise.all([loadEvents(), loadTasks()]);
+    await Promise.all([loadEvents(), loadTasks(), loadTeam()]);
   } catch (e) {
     if (e.code !== 'auth') toast(`불러오기 실패: ${e.message}`);
   } finally {
@@ -358,74 +393,102 @@ function holidayMap(from, to) {
 
 function renderCal() {
   const v = $('#viewCal');
-  const { y, m } = D.parts(S.cursor);
   const { from, to } = monthRange();
   const today = D.today();
   const hol = holidayMap(from, to);
-  const l1 = solarToLunar(D.make(y, m, 1));
+  const days = Array.from({ length: 7 }, (_, i) => D.addDays(from, i));
+  const a = D.parts(from);
+  const b = D.parts(to);
+  const thu = D.parts(D.addDays(from, 3)); // 목요일이 속한 달 기준 주차
+  const wk = Math.ceil(thu.d / 7);
   let html = `<div class="cal-nav">
-      <button type="button" class="nav-btn" data-nav="-1" aria-label="이전 달">‹</button>
-      <div class="ym">${y}년 ${m}월${l1 ? `<small>음력 ${l1.month}월 ${l1.day}일~</small>` : ''}</div>
-      <button type="button" class="nav-btn text" data-nav="0">오늘</button>
-      <button type="button" class="nav-btn" data-nav="1" aria-label="다음 달">›</button>
+      <button type="button" class="nav-btn" data-nav="-1" aria-label="이전 주">‹</button>
+      <div class="ym">${thu.m}월 ${wk}주<small>${a.m}/${a.d} ~ ${b.m}/${b.d}</small></div>
+      <button type="button" class="nav-btn text" data-nav="0">이번 주</button>
+      <button type="button" class="nav-btn" data-nav="1" aria-label="다음 주">›</button>
     </div>
-    <div class="cal-grid" id="calGrid">
-      ${D.DOW_KO.map((d, i) => `<div class="dow ${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${d}</div>`).join('')}`;
-  let i = 0;
-  for (let d = from; d <= to; d = D.addDays(d, 1), i++) {
+    <div class="week" id="weekWrap">`;
+  for (const d of days) {
     const p = D.parts(d);
-    const cls = ['dcell'];
-    if (p.m !== m) cls.push('out');
-    if (i % 7 === 0) cls.push('sun');
-    if (i % 7 === 6) cls.push('sat');
+    const w = D.dow(d);
     const ho = hol.get(d);
-    if (ho?.red) cls.push('hol');
-    if (d === today) cls.push('today');
-    if (d === S.sel) cls.push('sel');
     const l = solarToLunar(d);
-    const lt = l ? (l.day === 1 ? `${l.leap ? '윤' : ''}${l.month}.1` : String(l.day)) : '';
     const { evs, tds } = itemsOn(d);
-    const dots = [
-      ...evs.slice(0, 3).map((e) => `<i class="${e.lunarSeries ? 'l' : ''}"></i>`),
-      ...(evs.length < 3 && tds.length ? ['<i class="t"></i>'] : []),
-    ].join('');
-    html += `<button type="button" class="${cls.join(' ')}" data-day="${d}" aria-label="${D.label(d)}">
-        <span class="n">${p.d}</span>
-        ${ho ? `<span class="h" style="${ho.red ? '' : 'color:var(--muted)'}">${h(ho.name)}</span>` : `<span class="l${l && l.day === 1 ? ' first' : ''}">${lt}</span>`}
-        <span class="dots">${dots}</span>
-      </button>`;
+    const red = w === 0 || ho?.red;
+    html += `<div class="wday${d === today ? ' today' : ''}${w === 0 || w === 6 ? ' weekend' : ''}">
+        <button type="button" class="wdate" data-day="${d}" aria-label="${D.label(d)} 새 일정">
+          <span class="dw" style="${red ? 'color:var(--sun)' : w === 6 ? 'color:var(--accent)' : ''}">${D.DOW_KO[w]}</span>
+          <span class="dn" style="${red && d !== today ? 'color:var(--sun)' : ''}">${p.d}</span>
+          <span class="dl">${l ? `${l.leap ? '윤' : ''}${l.month}.${l.day}` : ''}</span>
+        </button>
+        <div class="witems">
+          ${ho ? `<div class="wh" style="${ho.red ? '' : 'color:var(--muted)'}">${h(ho.name)}</div>` : ''}
+          ${evs
+            .map((e) => {
+              const multi = e.date !== e.endDate;
+              const tm = e.allDay ? (multi ? `${D.parts(e.date).m}/${D.parts(e.date).d}~${D.parts(e.endDate).m}/${D.parts(e.endDate).d}` : '') : e.startTime;
+              const meta = [e.place, e.people?.length ? e.people.join(', ') : ''].filter(Boolean).join(' · ');
+              return `<button type="button" class="wev ${e.lunarSeries ? 'l' : ''}" data-ev="${h(e.key)}">
+                  <span class="t">${tm ? `<b>${h(tm)}</b> ` : ''}${h(e.title)}</span>${meta ? `<span class="m">${h(meta)}</span>` : ''}</button>`;
+            })
+            .join('')}
+          ${tds
+            .map((t) => `<button type="button" class="wev t${t.status === 'completed' ? ' done' : ''}" data-task="${h(t.id)}"><span class="t">☐ ${h(t.title)}</span></button>`)
+            .join('')}
+          ${!evs.length && !tds.length && !ho ? '<button type="button" class="wempty" data-day="' + d + '">+</button>' : ''}
+        </div>
+      </div>`;
   }
   html += '</div>';
-
-  const { evs, tds } = itemsOn(S.sel);
-  const sl = solarToLunar(S.sel);
-  const ho = hol.get(S.sel);
-  html += `<div class="day-head"><b>${D.parts(S.sel).m}월 ${D.parts(S.sel).d}일 (${D.DOW_KO[D.dow(S.sel)]})</b>
-      <span class="small muted">${sl ? `음력 ${sl.leap ? '윤' : ''}${sl.month}.${sl.day}` : ''}${ho ? ` · <span style="color:${ho.red ? 'var(--sun)' : 'inherit'}">${h(ho.name)}</span>` : ''}</span></div>
-    <div class="list">`;
-  if (!evs.length && !tds.length) html += '<div class="empty">일정이 없습니다. + 버튼으로 추가하세요.</div>';
-  for (const e of evs) {
-    const tm = e.allDay ? (e.date !== e.endDate ? `${D.parts(e.date).m}/${D.parts(e.date).d}~` : '종일') : e.startTime;
-    const meta = [];
-    if (e.date !== e.endDate) meta.push(`${D.shortLabel(e.date)} ~ ${D.shortLabel(e.endDate)}`);
-    if (e.lunarSeries) meta.push('음력 반복');
-    else if (e.recurringEventId) meta.push('반복');
-    if (e.place) meta.push(`장소: ${e.place}`);
-    if (e.people?.length) meta.push(`참여: ${e.people.join(', ')}`);
-    if (S.calendars.filter(calVisible).length > 1) meta.push(e.calendarName);
-    html += `<button type="button" class="item" data-ev="${h(e.key)}">
-        <span class="tm">${h(tm)}</span><span class="bar ${e.lunarSeries ? 'l' : ''}"></span>
-        <span class="body"><div class="ttl">${h(e.title)}</div>${meta.length ? `<div class="meta">${meta.map((x) => `<span>${h(x)}</span>`).join('')}</div>` : ''}</span>
-      </button>`;
-  }
-  for (const t of tds) {
-    html += `<button type="button" class="item" data-task="${h(t.id)}">
-        <span class="tm">할 일</span><span class="bar t"></span>
-        <span class="body"><div class="ttl" style="${t.status === 'completed' ? 'text-decoration:line-through;color:var(--faint)' : ''}">${h(t.title)}</div></span>
-      </button>`;
-  }
-  html += '</div>';
+  html += renderTeamWeek(days);
   v.innerHTML = html;
+}
+
+/* 하단 팀 일정 (월~금, 같은 일정은 한 막대, 인차지 짙은 색, 본인 제외) */
+function renderTeamWeek(days) {
+  const t = S.team;
+  let html = '<div class="team"><div class="team-h"><b>팀 일정</b>';
+  if (S.teamNeedsAuth && !t)
+    return `${html}</div><div class="empty small">팀 일정을 보려면 권한을 한 번 더 허용해 주세요.<br><button type="button" class="btn primary" data-reauth style="margin-top:10px">권한 허용</button></div></div>`;
+  if (!t) return `${html}</div><div class="empty small">PC 프로그램에서 팀 일정표를 가져오면 여기에 표시됩니다.</div></div>`;
+  html += `<span class="xs muted">${t.asOf ? `${D.parts(t.asOf).m}/${D.parts(t.asOf).d} 현재` : ''}</span></div>`;
+  const wd = days.slice(0, 5);
+  const ws = wd[0];
+  const we = wd[4];
+  if (we < t.from || ws > t.to) return `${html}<div class="empty small">이 주는 팀 일정표 기간 밖입니다.</div></div>`;
+  const names = t.names.filter((n) => n !== t.me);
+  html += `<table class="tw"><colgroup><col style="width:52px">${wd.map(() => '<col>').join('')}</colgroup>
+    <thead><tr><th></th>${wd.map((d) => `<th class="${d === D.today() ? 'tod' : ''}">${D.DOW_KO[D.dow(d)]} ${D.parts(d).d}</th>`).join('')}</tr></thead><tbody>`;
+  for (const n of names) {
+    const segs = t.entries
+      .filter((e) => e.name === n && e.end >= ws && e.start <= we)
+      .map((e) => {
+        const a = e.start < ws ? ws : e.start;
+        const b = e.end > we ? we : e.end;
+        return { e, i: D.diffDays(ws, a), n: D.diffDays(a, b) + 1 };
+      })
+      .sort((x, y) => x.i - y.i || y.n - x.n);
+    let row = '';
+    let i = 0;
+    for (const g of segs) {
+      if (g.i < i) continue;
+      while (i < g.i) {
+        row += '<td></td>';
+        i++;
+      }
+      const stack = segs.filter((o) => o !== g && o.i >= g.i && o.i < g.i + g.n);
+      const chip = (x) => `<span class="tc${x.e.lead ? ' lead' : ''}">${h(x.e.text)}</span>`;
+      row += `<td colspan="${g.n}">${chip(g)}${stack.map(chip).join('')}</td>`;
+      i = g.i + g.n;
+    }
+    while (i < 5) {
+      row += '<td></td>';
+      i++;
+    }
+    html += `<tr><th>${h(n)}</th>${row}</tr>`;
+  }
+  html += `</tbody></table><div class="note" style="padding:6px 2px 0"><span class="tc lead" style="display:inline-block">짙은 색</span> 인차지</div></div>`;
+  return html;
 }
 
 /* ───────────── 화면: 할 일 ───────────── */
@@ -1162,36 +1225,29 @@ function bind() {
     render();
     window.scrollTo(0, 0);
   });
-  $('#fab').addEventListener('click', () => (S.tab === 'cal' ? openEvent(null, S.sel) : openTask()));
+  $('#tabAdd').addEventListener('click', () => (S.tab === 'cal' ? openEvent(null, S.sel || D.today()) : openTask()));
   $('#btnRefresh').addEventListener('click', refreshAll);
   $('#btnSettings').addEventListener('click', openSettings);
 
   const move = async (n) => {
-    if (n === 0) {
-      S.cursor = S.sel = D.today();
-    } else {
-      const { y, m } = D.parts(S.cursor);
-      const t = D.addMonths(y, m, n);
-      S.cursor = D.make(t.y, t.m, 1);
-      S.sel = S.cursor.slice(0, 7) === D.today().slice(0, 7) ? D.today() : S.cursor;
-    }
+    S.cursor = n === 0 ? D.today() : D.addDays(S.cursor, 7 * n);
+    S.sel = S.cursor;
     render();
     await ensureMonthLoaded();
   };
   $('#viewCal').addEventListener('click', (e) => {
     const nav = e.target.closest('[data-nav]');
     if (nav) return move(+nav.dataset.nav);
+    if (e.target.closest('[data-reauth]')) {
+      return signIn('consent')
+        .then(() => loadTeam())
+        .then(render)
+        .catch((er) => toast(er.message));
+    }
     const day = e.target.closest('[data-day]');
     if (day) {
-      const d = day.dataset.day;
-      if (d === S.sel) return openEvent(null, d); // 같은 날 한 번 더 누르면 새 일정
-      S.sel = d;
-      if (d.slice(0, 7) !== S.cursor.slice(0, 7)) {
-        S.cursor = D.make(D.parts(d).y, D.parts(d).m, 1);
-        render();
-        return ensureMonthLoaded();
-      }
-      return render();
+      S.sel = day.dataset.day;
+      return openEvent(null, S.sel); // 날짜를 누르면 그날 새 일정
     }
     const ev = e.target.closest('[data-ev]');
     if (ev) return openEvent(S.events.find((x) => x.key === ev.dataset.ev));
@@ -1202,7 +1258,7 @@ function bind() {
   let sx = null;
   let sy = null;
   $('#viewCal').addEventListener('touchstart', (e) => {
-    if (!e.target.closest('#calGrid')) return;
+    if (!e.target.closest('#weekWrap, .cal-nav')) return;
     sx = e.touches[0].clientX;
     sy = e.touches[0].clientY;
   }, { passive: true });

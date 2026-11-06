@@ -7,13 +7,16 @@ const { shell, safeStorage } = require('electron');
 
 const CAL_SCOPE = 'https://www.googleapis.com/auth/calendar';
 const TASKS_SCOPE = 'https://www.googleapis.com/auth/tasks';
-const SCOPE = `${CAL_SCOPE} ${TASKS_SCOPE}`;
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata'; // 앱 전용 숨김 공간만
+const SCOPE = `${CAL_SCOPE} ${TASKS_SCOPE} ${DRIVE_SCOPE}`;
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 // ST_GAPI_BASE: 개발용 모의 서버 주소 (일반 사용 시 비어 있음)
 const DEV = process.env.ST_GAPI_BASE;
 const TOKEN_URL = DEV ? `${DEV}/token` : 'https://oauth2.googleapis.com/token';
 const API = DEV ? `${DEV}/calendar/v3` : 'https://www.googleapis.com/calendar/v3';
 const TASKS_API = DEV ? `${DEV}/tasks/v1` : 'https://tasks.googleapis.com/tasks/v1';
+const DRIVE_API = DEV ? `${DEV}/drive/v3` : 'https://www.googleapis.com/drive/v3';
+const DRIVE_UPLOAD = DEV ? `${DEV}/upload/drive/v3` : 'https://www.googleapis.com/upload/drive/v3';
 
 class GoogleCalendar {
   constructor(dir) {
@@ -46,6 +49,7 @@ class GoogleCalendar {
       clientId: this.state.clientId || '',
       // 할 일(Google Tasks) 권한: 예전에 캘린더만 승인한 경우 다시 연결 필요
       tasks: !!this.state.refreshToken && String(this.state.scopes || '').includes(TASKS_SCOPE),
+      drive: !!this.state.refreshToken && String(this.state.scopes || '').includes(DRIVE_SCOPE),
     };
   }
 
@@ -213,6 +217,36 @@ class GoogleCalendar {
       throw err;
     }
     return j;
+  }
+
+  /* ───── 구글 드라이브 앱 전용 숨김 공간(appDataFolder): 휴대폰 앱과 공유할 데이터 ───── */
+  async saveAppFile(name, text) {
+    const q = new URLSearchParams({ spaces: 'appDataFolder', q: `name='${name.replace(/'/g, "\\'")}'`, fields: 'files(id)' });
+    const found = await this.api('GET', `/files?${q}`, null, true, DRIVE_API);
+    const id = found.files?.[0]?.id;
+    const token = await this._accessToken();
+    if (id) {
+      const r = await fetch(`${DRIVE_UPLOAD}/files/${encodeURIComponent(id)}?uploadType=media`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
+        body: text,
+      });
+      if (!r.ok) throw Object.assign(new Error(`드라이브 저장 실패 (${r.status})`), { status: r.status });
+      return id;
+    }
+    const boundary = `st${Date.now()}`;
+    const body =
+      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n` +
+      JSON.stringify({ name, parents: ['appDataFolder'], mimeType: 'application/json' }) +
+      `\r\n--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${text}\r\n--${boundary}--`;
+    const r = await fetch(`${DRIVE_UPLOAD}/files?uploadType=multipart&fields=id`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${boundary}` },
+      body: Buffer.from(body, 'utf8'),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw Object.assign(new Error(j.error?.message || `드라이브 저장 실패 (${r.status})`), { status: r.status });
+    return j.id;
   }
 
   /* ───── Google Tasks (할 일) ───── */

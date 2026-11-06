@@ -2078,6 +2078,12 @@ async function openSettings() {
               <div class="sect" style="border-top:0;padding-top:4px">
                 <h2 style="font-size:14px">할 일 ↔ Google Tasks (휴대폰 연동)</h2>
                 ${
+                  g.tasks && !g.drive
+                    ? `<div class="row gap8 wrap"><span class="note">팀 일정을 휴대폰 앱에서 보려면 Google Cloud 콘솔에서 <button type="button" class="linkbtn" data-ext="https://console.cloud.google.com/apis/library/drive.googleapis.com">Google Drive API</button>를 켠 뒤 다시 연결하세요. (드라이브는 이 앱 전용 숨김 공간만 사용)</span>
+                       <button type="button" class="btn" data-greconnect>드라이브 권한 추가 (다시 연결)</button><span class="small muted" id="s-gmsg2"></span></div>`
+                    : ''
+                }
+                ${
                   g.tasks
                     ? `<label class="checkline small"><input type="checkbox" id="s-tasks" ${st.tasksSync !== false ? 'checked' : ''}>할 일을 Google Tasks "내 할 일" 목록과 동기화</label>
                        <span class="note">휴대폰의 Google Tasks 앱이나 구글 캘린더 앱에서 보고, 추가하고, 완료할 수 있습니다. 제목·메모·기한 날짜·완료·하위 할 일이 동기화되고, 시간·반복 규칙·알림은 이 PC에만 보관됩니다.</span>
@@ -2236,8 +2242,9 @@ async function openSettings() {
       }
       S.g = r.data;
       draw();
+      if (S.g.drive && S.data.team) uploadTeamForPhone();
       if (S.g.tasks) {
-        toast('할 일 권한이 추가되었습니다. 할 일을 Google Tasks와 동기화합니다.');
+        toast('권한이 추가되었습니다.');
         await syncTasks();
         const pr = await window.api.push.init();
         if (pr.ok) S.pushDevices = pr.data.devices;
@@ -2466,7 +2473,39 @@ async function importTeam() {
   // 팀원 일정은 이 PC에만 보관 (오른쪽 클릭으로 보기)
   S.data.team = { fileName: r.data.fileName, importedAt: Date.now(), parsed };
   save();
+  uploadTeamForPhone();
   previewTeamImport(parsed, me);
+}
+
+/** 팀 일정표를 휴대폰 앱에서 볼 수 있게 구글 드라이브의 앱 전용 숨김 공간에 올림 (캘린더·Tasks에는 올리지 않음) */
+async function uploadTeamForPhone() {
+  const t = S.data.team;
+  if (!t || !S.g.connected || !S.g.drive) return;
+  const names = [];
+  const entries = [];
+  const dd = (d) => d.replace(/-/g, '');
+  for (const p of t.parsed) {
+    for (const person of p.people) {
+      let ni = names.indexOf(person.name);
+      if (ni < 0) ni = names.push(person.name) - 1;
+      for (const e of person.entries) entries.push([ni, e.text, dd(e.start), dd(e.end), e.lead ? 1 : 0]);
+    }
+  }
+  const blob = JSON.stringify({
+    v: 1,
+    me: settings().teamMe,
+    file: t.fileName,
+    asOf: t.parsed.map((p) => p.asOf).filter(Boolean)[0] || null,
+    from: t.parsed.reduce((a, p) => (!a || p.from < a ? p.from : a), null),
+    to: t.parsed.reduce((a, p) => (!a || p.to > a ? p.to : a), null),
+    names,
+    e: entries,
+  });
+  const r = await window.api.drive.save('team-schedule.json', blob);
+  if (r.ok) {
+    t.uploadedAt = Date.now();
+    save();
+  } else toast(`팀 일정을 휴대폰용으로 올리지 못했습니다: ${r.error}`);
 }
 
 function previewTeamImport(parsed, me) {
@@ -3004,7 +3043,12 @@ async function init() {
     toast(`변경사항(${v})이 준비되었습니다. 상단의 "변경사항 적용"을 누르면 바로 반영됩니다.`);
   });
   if (S.g.connected) refreshGoogle();
-  if (S.g.connected && S.g.tasks) window.api.push.init().catch(() => {});
+  if (S.g.connected && S.g.tasks) {
+    window.api.push.init().catch(() => {});
+  }
+  if (S.g.connected && S.g.drive && S.data.team && !S.data.team.uploadedAt) {
+    uploadTeamForPhone();
+  }
 
   let lastDay = D.today();
   setInterval(() => {
