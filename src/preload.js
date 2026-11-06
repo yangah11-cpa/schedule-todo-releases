@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('api', {
   openExternal: call('app:openExternal'),
   version: call('app:version'),
   info: call('app:info'),
+  focus: call('app:focus'),
+  prefs: { get: call('prefs:get'), set: call('prefs:set') },
   patch: {
     state: call('patch:state'),
     apply: call('patch:apply'),

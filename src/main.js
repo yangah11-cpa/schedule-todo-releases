@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Tray, nativeImage } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { GoogleCalendar } = require('./google');
@@ -13,8 +13,60 @@ if (!app.requestSingleInstanceLock()) {
 const dataDir = app.getPath('userData');
 const dataFile = path.join(dataDir, 'data.json');
 const stateFile = path.join(dataDir, 'window.json');
+const prefsFile = path.join(dataDir, 'app-prefs.json');
 let win;
 let google;
+let tray = null;
+let quitting = false;
+const startHidden = process.argv.includes('--hidden');
+
+/* ───────────── 시작·트레이 설정 ───────────── */
+const DEFAULT_PREFS = { autoStart: true, closeToTray: true, initialized: false };
+function loadPrefs() {
+  return { ...DEFAULT_PREFS, ...readJson(prefsFile, {}) };
+}
+function savePrefs(p) {
+  try {
+    fs.writeFileSync(prefsFile, JSON.stringify(p, null, 1));
+  } catch {
+    /* 무시 */
+  }
+}
+function applyAutoStart(on) {
+  if (!app.isPackaged) return;
+  try {
+    app.setLoginItemSettings({ openAtLogin: !!on, path: process.execPath, args: ['--hidden'] });
+  } catch {
+    /* 무시 */
+  }
+}
+function showWindow() {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+function createTray() {
+  if (tray) return;
+  const img = nativeImage.createFromPath(path.join(__dirname, 'icon.png')).resize({ width: 16, height: 16 });
+  tray = new Tray(img);
+  tray.setToolTip('일정 & 할일');
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: '열기', click: showWindow },
+      { type: 'separator' },
+      {
+        label: '종료',
+        click: () => {
+          quitting = true;
+          app.quit();
+        },
+      },
+    ])
+  );
+  tray.on('click', showWindow);
+  tray.on('double-click', showWindow);
+}
 
 function readJson(file, fallback) {
   try {
@@ -61,10 +113,13 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      backgroundThrottling: false, // 창이 숨겨져 있어도 알림 확인이 늦어지지 않게
     },
   });
   if (st.maximized) win.maximize();
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => {
+    if (!startHidden) win.show(); // Windows 시작 시 자동 실행이면 트레이에서 조용히 시작
+  });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -81,18 +136,46 @@ function createWindow() {
     const b = win.getNormalBounds();
     fs.writeFileSync(stateFile, JSON.stringify({ ...b, maximized: win.isMaximized() }));
   };
-  win.on('close', saveState);
+  win.on('close', (e) => {
+    saveState();
+    if (!quitting && loadPrefs().closeToTray) {
+      e.preventDefault();
+      win.hide();
+      if (!global.__trayHinted && tray) {
+        global.__trayHinted = true;
+        try {
+          tray.displayBalloon({ title: '일정 & 할일', content: '트레이에서 계속 실행 중입니다. 알림을 받을 수 있습니다.' });
+        } catch {
+          /* 무시 */
+        }
+      }
+    }
+  });
 }
 
-app.on('second-instance', () => {
-  if (win) {
-    if (win.isMinimized()) win.restore();
-    win.focus();
-  }
+app.on('before-quit', () => {
+  quitting = true;
 });
+
+app.on('second-instance', () => showWindow());
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
+  const prefs = loadPrefs();
+  if (!prefs.initialized) {
+    // 처음 실행: Windows 시작 시 자동 실행 켜기
+    applyAutoStart(prefs.autoStart);
+    savePrefs({ ...prefs, initialized: true });
+  }
+  createTray();
+  ipcMain.handle('app:focus', () => showWindow());
+  ipcMain.handle('prefs:get', () => loadPrefs());
+  ipcMain.handle('prefs:set', (_e, patch) => {
+    const p = { ...loadPrefs(), ...(patch || {}) };
+    savePrefs(p);
+    if ('autoStart' in (patch || {})) applyAutoStart(p.autoStart);
+    return p;
+  });
   google = new GoogleCalendar(dataDir);
 
   ipcMain.handle('data:load', () => loadData());
@@ -168,7 +251,8 @@ function watchPatch() {
   const info = appInfo();
   ipcMain.handle('patch:state', () => patchReady);
   ipcMain.handle('patch:apply', () => {
-    app.relaunch();
+    // 다시 시작할 때는 창이 보이도록 --hidden 제외
+    app.relaunch({ args: process.argv.slice(1).filter((a) => a !== '--hidden') });
     app.exit(0);
   });
   if (!info.patchDir) return;
@@ -247,6 +331,7 @@ function setupAutoUpdate() {
   });
   ipcMain.handle('update:install', () => {
     if (updateState.status !== 'ready') return false;
+    quitting = true;
     setImmediate(() => autoUpdater.quitAndInstall(true, true)); // 조용히 설치 후 다시 실행
     return true;
   });
@@ -254,4 +339,6 @@ function setupAutoUpdate() {
   setInterval(check, 4 * 3600 * 1000);
 }
 
-app.on('window-all-closed', () => app.quit());
+app.on('window-all-closed', () => {
+  if (quitting || !loadPrefs().closeToTray) app.quit();
+});

@@ -39,6 +39,24 @@ const ALARMS_TIMED = [
   ['1440', '1일 전'],
 ];
 
+// 할 일 알림 (이 컴퓨터에서만 알림)
+const TODO_ALARMS_TIMED = [
+  ['', '알림 없음'],
+  ['0', '정시'],
+  ['10', '10분 전'],
+  ['30', '30분 전'],
+  ['60', '1시간 전'],
+  ['1440', '1일 전'],
+];
+const TODO_ALARMS_DATE = [
+  ['', '알림 없음'],
+  ['-540', '당일 오전 9시'],
+  ['360', '전날 오후 6시'],
+  ['900', '전날 오전 9시'],
+];
+/** 기존 할 일(알림 항목 이전)은 시간이 있으면 정시 알림 */
+const todoAlarm = (t) => (t.alarm === undefined ? (t.time ? 0 : null) : t.alarm);
+
 const S = {
   data: null,
   view: 'month',
@@ -1316,6 +1334,7 @@ function makeInstance(t, due) {
     repeat: { ...t.repeat },
     genMode: t.genMode,
     showOnCalendar: t.showOnCalendar,
+    alarm: todoAlarm(t),
     memo: t.memo || '',
     subtasks: cloneSubs(t.subtasks),
     seriesId: t.seriesId,
@@ -1421,6 +1440,10 @@ function openTodoDialog(existing = null, preset = null) {
     repeat: { type: 'none', interval: 1, weekdays: [], monthDay: null, ...(src.repeat || {}) },
     genMode: src.genMode || 'onComplete',
     showOnCalendar: src.showOnCalendar ?? true,
+    alarm: (() => {
+      const a = existing ? todoAlarm(existing) : null;
+      return a === null || a === undefined ? '' : String(a);
+    })(),
     memo: src.memo || '',
     subtasks: (src.subtasks || []).map((s) => ({ ...s })),
   };
@@ -1497,7 +1520,11 @@ function openTodoDialog(existing = null, preset = null) {
           ? `<div class="grid2">
               <div class="fld"><label class="lbl" for="t-due">기한일</label><input type="date" class="inp" id="t-due" value="${f.due}"></div>
               <div class="fld"><label class="lbl" for="t-time">시간 (선택)</label><input type="time" class="inp" id="t-time" value="${f.time}"></div>
-            </div>`
+            </div>
+            <div class="fld"><label class="lbl" for="t-alarm">알림 <span class="muted" style="font-weight:400">(이 컴퓨터에서만)</span></label>
+              <select class="inp" id="t-alarm">${(f.time ? TODO_ALARMS_TIMED : TODO_ALARMS_DATE)
+                .map(([v, t]) => `<option value="${v}" ${f.alarm === v ? 'selected' : ''}>${t}</option>`)
+                .join('')}</select></div>`
           : ''
       }
       <div class="fld"><span class="lbl">반복</span>
@@ -1554,6 +1581,17 @@ function openTodoDialog(existing = null, preset = null) {
     } else if (t.id === 't-due') {
       f.due = t.value || today;
       draw();
+    } else if (t.id === 't-time') {
+      // 시간을 넣거나 지우면 알림 선택지가 바뀜
+      const had = !!form.querySelector('#t-alarm option[value="0"]'); // 지금 보이는 알림 목록이 '시간 있음' 목록인지
+      f.time = t.value;
+      if (had !== !!f.time) {
+        const opts = (f.time ? TODO_ALARMS_TIMED : TODO_ALARMS_DATE).map((o) => o[0]);
+        if (!opts.includes(f.alarm)) f.alarm = f.time && f.alarm === '' ? '' : f.time ? '0' : '';
+        draw();
+      }
+    } else if (t.id === 't-alarm') {
+      f.alarm = t.value;
     } else if (t.id === 't-int') {
       f.repeat.interval = Math.max(1, parseInt(t.value, 10) || 1);
       draw();
@@ -1631,6 +1669,7 @@ function saveTodo(existing, f) {
   t.repeat = r;
   t.genMode = r.type === 'afterN' ? 'onComplete' : f.genMode;
   t.showOnCalendar = f.showOnCalendar;
+  t.alarm = t.due && f.alarm !== '' ? Number(f.alarm) : null;
   t.memo = f.memo;
   t.subtasks = f.subtasks.filter((s) => s.title.trim()).map((s) => ({ ...s, title: s.title.trim() }));
   t.touched = true;
@@ -1645,7 +1684,7 @@ function saveTodo(existing, f) {
   if (t.seriesId) {
     for (const o of S.data.todos) {
       if (o === t || o.seriesId !== t.seriesId || o.done || o.deleted) continue;
-      Object.assign(o, { title: t.title, repeat: { ...r }, genMode: t.genMode, showOnCalendar: t.showOnCalendar, anchor: t.anchor, time: t.time });
+      Object.assign(o, { title: t.title, repeat: { ...r }, genMode: t.genMode, showOnCalendar: t.showOnCalendar, anchor: t.anchor, time: t.time, alarm: t.alarm });
     }
   }
   ensureFixed();
@@ -1690,6 +1729,7 @@ async function openSettings() {
   const st = settings();
   const ver = await window.api.version();
   const info = await window.api.info();
+  let prefs = await window.api.prefs.get();
   const { el, close } = openModal(
     `<div class="mhead"><h1>설정</h1><button type="button" class="btn ghost icon" data-close aria-label="닫기">✕</button></div>
      <div class="mbody" id="setBody"></div>
@@ -1739,6 +1779,11 @@ async function openSettings() {
         <label class="checkline small"><input type="checkbox" id="s-hol" ${st.showHolidays ? 'checked' : ''}>공휴일 표시 (대체공휴일 포함, 선거일·임시공휴일 제외)</label>
         <label class="checkline small"><input type="checkbox" id="s-lun" ${st.showLunar ? 'checked' : ''}>음력 날짜 표시</label>
       </section>
+      <section class="sect"><h2>시작·알림</h2>
+        <label class="checkline small"><input type="checkbox" id="s-autostart" ${prefs.autoStart ? 'checked' : ''}>Windows 시작 시 자동 실행 (트레이에서 조용히 시작)</label>
+        <label class="checkline small"><input type="checkbox" id="s-tray" ${prefs.closeToTray ? 'checked' : ''}>창을 닫아도 트레이에서 계속 실행 (알림을 받으려면 켜 두세요)</label>
+        <span class="note">알림은 프로그램이 실행 중일 때 이 컴퓨터에만 표시됩니다. 완전히 끄려면 트레이 아이콘을 우클릭해 "종료"를 누르세요.</span>
+      </section>
       <section class="sect"><h2>업데이트</h2>
         <div class="row gap8 wrap"><span class="small">현재 버전 ${h(ver)}${info?.source === 'patch' ? ` <span class="muted">(즉시 적용 · 설치본 ${h(info.bundledVersion)})</span>` : ''}</span><button type="button" class="btn" data-updcheck>업데이트 확인</button><span class="small muted" id="updMsg"></span></div>
         <span class="note">새 버전은 자동으로 내려받아 두었다가 프로그램을 닫을 때 설치됩니다.</span>
@@ -1754,6 +1799,10 @@ async function openSettings() {
 
   body.addEventListener('change', async (e) => {
     const t = e.target;
+    if (t.id === 's-autostart' || t.id === 's-tray') {
+      prefs = await window.api.prefs.set(t.id === 's-autostart' ? { autoStart: t.checked } : { closeToTray: t.checked });
+      return;
+    }
     if (t.dataset.calvis) {
       st.calendarVisibility[t.dataset.calvis] = t.checked;
       save();
@@ -1857,7 +1906,8 @@ function checkAlarms() {
   const to = D.addDays(today, 8);
   const notify = (title, body) => {
     try {
-      new Notification(title, { body });
+      const n = new Notification(title, { body, requireInteraction: true });
+      n.onclick = () => window.api.focus();
     } catch {
       /* 무시 */
     }
@@ -1871,9 +1921,10 @@ function checkAlarms() {
     }
   }
   for (const t of S.data.todos) {
-    if (t.done || t.deleted || !t.due || !t.time) continue;
-    const at = D.toDateTime(t.due, t.time).getTime();
-    if (at > since && at <= now) notify(`할 일: ${t.title}`, `${D.label(t.due)} ${t.time}`);
+    const alarm = todoAlarm(t);
+    if (t.done || t.deleted || !t.due || alarm === null) continue;
+    const at = D.toDateTime(t.due, t.time || '00:00').getTime() - alarm * 60000;
+    if (at > since && at <= now) notify(`할 일: ${t.title}`, `${t.due === D.today() ? '오늘' : D.label(t.due)}${t.time ? ` ${t.time}` : ''}까지`);
   }
   st.lastAlarmCheck = now;
 }
