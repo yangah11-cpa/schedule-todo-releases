@@ -407,39 +407,75 @@ function renderCal() {
       <button type="button" class="nav-btn text" data-nav="0">이번 주</button>
       <button type="button" class="nav-btn" data-nav="1" aria-label="다음 주">›</button>
     </div>
-    <div class="week" id="weekWrap">`;
-  for (const d of days) {
-    const p = D.parts(d);
+    <div class="hweek" id="weekWrap">`;
+  // 머리글: 요일·날짜·음력·휴일 (누르면 그날 새 일정)
+  for (const [i, d] of days.entries()) {
     const w = D.dow(d);
     const ho = hol.get(d);
     const l = solarToLunar(d);
-    const { evs, tds } = itemsOn(d);
     const red = w === 0 || ho?.red;
-    html += `<div class="wday${d === today ? ' today' : ''}${w === 0 || w === 6 ? ' weekend' : ''}">
-        <button type="button" class="wdate" data-day="${d}" aria-label="${D.label(d)} 새 일정">
-          <span class="dw" style="${red ? 'color:var(--sun)' : w === 6 ? 'color:var(--accent)' : ''}">${D.DOW_KO[w]}</span>
-          <span class="dn" style="${red && d !== today ? 'color:var(--sun)' : ''}">${p.d}</span>
-          <span class="dl">${l ? `${l.leap ? '윤' : ''}${l.month}.${l.day}` : ''}</span>
-        </button>
-        <div class="witems">
-          ${ho ? `<div class="wh" style="${ho.red ? '' : 'color:var(--muted)'}">${h(ho.name)}</div>` : ''}
-          ${evs
-            .map((e) => {
-              const multi = e.date !== e.endDate;
-              const tm = e.allDay ? (multi ? `${D.parts(e.date).m}/${D.parts(e.date).d}~${D.parts(e.endDate).m}/${D.parts(e.endDate).d}` : '') : e.startTime;
-              const meta = [e.place, e.people?.length ? e.people.join(', ') : ''].filter(Boolean).join(' · ');
-              return `<button type="button" class="wev ${e.lunarSeries ? 'l' : ''}" data-ev="${h(e.key)}">
-                  <span class="t">${tm ? `<b>${h(tm)}</b> ` : ''}${h(e.title)}</span>${meta ? `<span class="m">${h(meta)}</span>` : ''}</button>`;
-            })
-            .join('')}
-          ${tds
-            .map((t) => `<button type="button" class="wev t${t.status === 'completed' ? ' done' : ''}" data-task="${h(t.id)}"><span class="t">☐ ${h(t.title)}</span></button>`)
-            .join('')}
-          ${!evs.length && !tds.length && !ho ? '<button type="button" class="wempty" data-day="' + d + '">+</button>' : ''}
-        </div>
-      </div>`;
+    html += `<button type="button" class="hd${d === today ? ' today' : ''}${w === 0 || w === 6 ? ' weekend' : ''}" data-day="${d}" style="grid-column:${i + 1};grid-row:1" aria-label="${D.label(d)} 새 일정">
+        <span class="dw" style="${red ? 'color:var(--sun)' : w === 6 ? 'color:var(--accent)' : ''}">${D.DOW_KO[w]}</span>
+        <span class="dn" style="${red && d !== today ? 'color:var(--sun)' : ''}">${D.parts(d).d}</span>
+        <span class="dl">${ho ? `<span style="color:${ho.red ? 'var(--sun)' : 'var(--muted)'}">${h(ho.name)}</span>` : l ? `${l.leap ? '윤' : ''}${l.month}.${l.day}` : ''}</span>
+      </button>`;
+  }
+  // 일정·할 일을 줄(lane)에 배치: 여러 날 일정은 이어진 막대
+  const segs = [];
+  for (const e of S.events) {
+    if (e.holidayCal || e.endDate < from || e.date > to) continue;
+    const a = e.date < from ? from : e.date;
+    const b = e.endDate > to ? to : e.endDate;
+    segs.push({ kind: 'ev', e, i: D.diffDays(from, a), n: D.diffDays(a, b) + 1, cont: e.date < from, more: e.endDate > to });
+  }
+  for (const t of S.tasks) {
+    if (t.parent || t.deleted || !t.due) continue;
+    const d = t.due.slice(0, 10);
+    if (d < from || d > to) continue;
+    segs.push({ kind: 'task', t, i: D.diffDays(from, d), n: 1 });
+  }
+  const rank = (g) => (g.kind === 'task' ? 3 : g.n > 1 ? 0 : g.e.allDay ? 1 : 2);
+  segs.sort((x, y) => rank(x) - rank(y) || y.n - x.n || x.i - y.i || (x.e?.startTime || '').localeCompare(y.e?.startTime || ''));
+  const lanes = [];
+  for (const g of segs) {
+    let L = 0;
+    for (; ; L++) {
+      lanes[L] ||= Array(7).fill(false);
+      let free = true;
+      for (let c = g.i; c < g.i + g.n; c++) if (lanes[L][c]) free = false;
+      if (free) break;
+    }
+    for (let c = g.i; c < g.i + g.n; c++) lanes[L][c] = true;
+    g.lane = L;
+  }
+  // 요일별 배경 칸(빈 곳을 누르면 그날 새 일정)
+  for (const [i, d] of days.entries()) {
+    const w = D.dow(d);
+    html += `<button type="button" class="hcol${d === today ? ' today' : ''}${w === 0 || w === 6 ? ' weekend' : ''}${i === 6 ? ' last' : ''}" data-day="${d}" style="grid-column:${i + 1};grid-row:2 / span ${lanes.length + 1}" aria-label="${D.label(d)} 새 일정"></button>`;
+  }
+  for (const g of segs) {
+    const pos = `grid-column:${g.i + 1} / span ${g.n};grid-row:${g.lane + 2}`;
+    if (g.kind === 'task') {
+      html += `<button type="button" class="hev t${g.t.status === 'completed' ? ' done' : ''}" data-task="${h(g.t.id)}" style="${pos}">☐ ${h(g.t.title)}</button>`;
+      continue;
+    }
+    const e = g.e;
+    const tm = !e.allDay && e.startTime ? `<b>${h(e.startTime)}</b> ` : '';
+    html += `<button type="button" class="hev${e.lunarSeries ? ' l' : ''}${g.n > 1 ? ' bar' : ''}${g.cont ? ' cont' : ''}${g.more ? ' more' : ''}" data-ev="${h(e.key)}" style="${pos}">${tm}${h(e.title)}</button>`;
   }
   html += '</div>';
+  // 선택한 주의 일정 목록(자세히): 장소·참여 인원
+  const detail = segs.filter((g) => g.kind === 'ev' && (g.e.place || g.e.people?.length));
+  if (detail.length) {
+    html += `<div class="wdetail">${detail
+      .sort((x, y) => x.i - y.i)
+      .map((g) => {
+        const e = g.e;
+        const when = e.date === e.endDate ? `${D.parts(e.date).m}/${D.parts(e.date).d}` : `${D.parts(e.date).m}/${D.parts(e.date).d}~${D.parts(e.endDate).m}/${D.parts(e.endDate).d}`;
+        return `<button type="button" class="wd" data-ev="${h(e.key)}"><span class="wdw">${when}</span><span class="wdt">${h(e.title)}</span><span class="wdm">${h([e.place, e.people?.join(', ')].filter(Boolean).join(' · '))}</span></button>`;
+      })
+      .join('')}</div>`;
+  }
   html += renderTeamWeek(days);
   v.innerHTML = html;
 }
