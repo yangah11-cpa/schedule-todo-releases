@@ -2673,13 +2673,38 @@ function openTeamView(date) {
   const draw = () => {
     const ws = D.addDays(cur, -((D.dow(cur) + 6) % 7)); // 월요일 시작
     const days = Array.from({ length: 7 }, (_, i) => D.addDays(ws, i));
-    const names = [...new Set(team.flatMap((p) => p.people.map((x) => x.name)))];
-    const cell = (name, d) => {
-      const hit = teamOn(team, d).find((r) => r.name === name);
-      if (!hit || !hit.items.length) return '';
-      return hit.items
-        .map((it) => `<span class="tchip${it.lead ? ' lead' : ''}" title="${h(it.raw)} ${h(D.shortLabel(it.start))}~${h(D.shortLabel(it.end))}">${h(it.text)}${it.lead ? ' ★' : ''}</span>`)
-        .join('');
+    // 나(본인)는 제외, 같은 일정은 기간만큼 한 막대로 이어서 표시
+    const names = [...new Set(team.flatMap((p) => p.people.map((x) => x.name)))].filter((n) => n !== me);
+    const we = days[6];
+    const cls = (d) => `${d === date ? 'sel' : ''} ${D.dow(d) === 0 || D.dow(d) === 6 ? 'we' : ''}`;
+    const rowHtml = (name) => {
+      const segs = [];
+      for (const p of team) {
+        const person = p.people.find((x) => x.name === name);
+        if (!person) continue;
+        for (const it of person.entries) {
+          if (it.end < ws || it.start > we) continue;
+          const a = it.start < ws ? ws : it.start;
+          const b = it.end > we ? we : it.end;
+          segs.push({ it, a, b, i: D.diffDays(ws, a), n: D.diffDays(a, b) + 1, cont: it.start < ws, more: it.end > we });
+        }
+      }
+      segs.sort((x, y) => x.i - y.i || y.n - x.n);
+      let html = '';
+      let i = 0;
+      const chip = (g) =>
+        `<span class="tchip${g.it.lead ? ' lead' : ''}${g.cont ? ' cont' : ''}${g.more ? ' more' : ''}" title="${h(g.it.text)} ${h(D.shortLabel(g.it.start))} ~ ${h(D.shortLabel(g.it.end))}${g.it.lead ? ' · 인차지' : ''}">${h(g.it.text)}</span>`;
+      for (let k = 0; k < segs.length; k++) {
+        const g = segs[k];
+        if (g.i < i) continue; // 겹치는 일정은 앞 칸에 함께 표시됨
+        while (i < g.i) html += `<td class="${cls(days[i++])}"></td>`;
+        // 같은 기간에 겹치는 다른 일정은 같은 칸에 쌓기
+        const stack = segs.filter((o) => o !== g && o.i >= g.i && o.i < g.i + g.n);
+        html += `<td colspan="${g.n}" class="span ${g.n === 1 ? cls(days[g.i]) : ''}">${chip(g)}${stack.map(chip).join('')}</td>`;
+        i = g.i + g.n;
+      }
+      while (i < 7) html += `<td class="${cls(days[i++])}"></td>`;
+      return `<tr><th>${h(name)}</th>${html}</tr>`;
     };
     const inRange = team.some((p) => days.some((d) => d >= p.from && d <= p.to));
     $('#tvBody', el).innerHTML = `
@@ -2690,18 +2715,11 @@ function openTeamView(date) {
         ${inRange ? '' : '<div class="warn">이 주는 가져온 팀 일정표의 기간 밖입니다.</div>'}
         <div style="overflow:auto">
         <table class="tview">
-          <thead><tr><th></th>${days
-            .map((d) => `<th class="${d === date ? 'sel' : ''} ${D.dow(d) === 0 || D.dow(d) === 6 ? 'we' : ''}">${D.parts(d).m}/${D.parts(d).d} (${D.DOW_KO[D.dow(d)]})</th>`)
-            .join('')}</tr></thead>
-          <tbody>${names
-            .map(
-              (n) => `<tr class="${n === me ? 'me' : ''}"><th>${h(n)}</th>${days
-                .map((d) => `<td class="${d === date ? 'sel' : ''} ${D.dow(d) === 0 || D.dow(d) === 6 ? 'we' : ''}">${cell(n, d)}</td>`)
-                .join('')}</tr>`
-            )
-            .join('')}</tbody>
+          <colgroup><col style="width:72px">${days.map(() => '<col>').join('')}</colgroup>
+          <thead><tr><th></th>${days.map((d) => `<th class="${cls(d)}">${D.parts(d).m}/${D.parts(d).d} (${D.DOW_KO[D.dow(d)]})</th>`).join('')}</tr></thead>
+          <tbody>${names.map(rowHtml).join('')}</tbody>
         </table></div>
-        <div class="note">★ 인차지 · ${h(S.data.team.fileName)} 기준 · 이 정보는 이 PC에만 보관되며 캘린더에는 등록하지 않습니다.</div>
+        <div class="note"><span class="tchip lead" style="display:inline-block">짙은 색</span> 인차지 · ${h(S.data.team.fileName)} 기준 · 이 정보는 이 PC에만 보관되며 캘린더에는 등록하지 않습니다.</div>
       </div>`;
   };
   draw();

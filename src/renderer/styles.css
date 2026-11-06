@@ -278,5 +278,9 @@ textarea.inp { height: auto; padding: 10px 12px; resize: vertical; }
 .tview .sel { background: #EEF3FD; }
 .tview tr.me th, .tview tr.me td { font-weight: 600; }
 .tview tr.me th { color: var(--accent-d); }
-.tchip { display: block; padding: 2px 6px; border-radius: 4px; background: #E3EBFA; color: #22488F; margin: 1px 0; white-space: nowrap; }
-.tchip.lead { background: #C3D4F4; }
+.tview { table-layout: fixed; }
+.tview td.span { padding: 6px 4px; }
+.tchip { display: block; padding: 3px 8px; border-radius: 5px; background: #E3EBFA; color: #22488F; margin: 1px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tchip.lead { background: #4A6FC0; color: #fff; font-weight: 600; }
+.tchip.cont { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -4px; }
+.tchip.more { border-top-right-radius: 0; border-bottom-right-radius: 0; margin-right: -4px; }
