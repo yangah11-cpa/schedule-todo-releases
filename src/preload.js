@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('api', {
   focus: call('app:focus'),
   prefs: { get: call('prefs:get'), set: call('prefs:set') },
   push: { init: call('push:init'), notify: call('push:notify') },
+  team: { open: call('team:open') },
   patch: {
     state: call('patch:state'),
     apply: call('patch:apply'),

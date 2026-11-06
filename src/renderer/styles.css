@@ -261,3 +261,21 @@ textarea.inp { height: auto; padding: 10px 12px; resize: vertical; }
 #calBody .chip[draggable="true"] { cursor: grab; }
 #calBody .chip.dragging { opacity: .45; }
 .dbg.droptarget, .wbg.droptarget { background: #EAF1FC !important; box-shadow: inset 0 0 0 2px #9DB8EA; }
+
+/* 오른쪽 클릭 메뉴 */
+.ctxmenu { position: fixed; z-index: 90; min-width: 200px; background: #fff; border: 1px solid var(--line2); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.16); padding: 4px; display: flex; flex-direction: column; }
+.ctxmenu button { border: 0; background: none; text-align: left; padding: 8px 12px; border-radius: 6px; font-size: 13px; }
+.ctxmenu button:hover { background: var(--soft); }
+.ctxmenu .sep { height: 1px; background: var(--line); margin: 4px 2px; }
+/* 팀원 일정 */
+.modal.xwide { width: 1040px; }
+.tview { border-collapse: collapse; width: 100%; font-size: 13px; }
+.tview th, .tview td { border: 1px solid var(--line); padding: 6px 8px; vertical-align: top; text-align: left; }
+.tview thead th { background: #FAFAF8; font-weight: 600; white-space: nowrap; }
+.tview tbody th { white-space: nowrap; background: #FAFAF8; }
+.tview .we { background: #F6F5F1; }
+.tview .sel { background: #EEF3FD; }
+.tview tr.me th, .tview tr.me td { font-weight: 600; }
+.tview tr.me th { color: var(--accent-d); }
+.tchip { display: block; padding: 2px 6px; border-radius: 4px; background: #E3EBFA; color: #22488F; margin: 1px 0; white-space: nowrap; }
+.tchip.lead { background: #C3D4F4; }

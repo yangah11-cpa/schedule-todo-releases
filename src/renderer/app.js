@@ -3,6 +3,7 @@ import { solarToLunar, lunarToSolar, LUNAR_MAX_YEAR } from './lib/lunar.js';
 import { expandEvent, nextOccurrence, firstOnOrAfter, describeRule, parseQuickAdd, EVENT_REPEAT_LABEL } from './lib/recur.js';
 import { getHolidays } from './lib/holidays.js';
 import { solarPayload, lunarTargets, lunarPayload, fromGoogle, timeRange, composeDescription } from './lib/gsync.js';
+import { parseTeamWorkbook, myEngagements, teamOn, sameClient } from './lib/team.js';
 
 /* ───────────── 공통 ───────────── */
 const $ = (s, r = document) => r.querySelector(s);
@@ -21,6 +22,7 @@ const DEFAULT_SETTINGS = {
   defaultCalendar: null,
   pendingDeletes: [],
   pendingTaskDeletes: [],
+  teamMe: '양하승',
   tasksSync: true,
   phoneEvents: false,
   lastAlarmCheck: null,
@@ -2112,6 +2114,18 @@ async function openSettings() {
         <label class="checkline small"><input type="checkbox" id="s-hol" ${st.showHolidays ? 'checked' : ''}>공휴일 표시 (대체공휴일 포함, 선거일·임시공휴일 제외)</label>
         <label class="checkline small"><input type="checkbox" id="s-lun" ${st.showLunar ? 'checked' : ''}>음력 날짜 표시</label>
       </section>
+      <section class="sect"><h2>팀 일정표</h2>
+        <div class="row gap8 wrap">
+          <label class="small" for="s-teamme">일정표의 내 이름</label>
+          <input class="inp" id="s-teamme" value="${h(st.teamMe || '')}" style="width:120px;height:34px">
+          <button type="button" class="btn" data-teamimport>엑셀 가져오기</button>
+        </div>
+        <span class="note">${
+          S.data.team
+            ? `마지막 가져오기: ${h(S.data.team.fileName)} (${h(S.data.team.parsed.map((p) => p.asOf || '').filter(Boolean).join(', ') || '기준일 없음')} 기준) · 달력에서 오른쪽 클릭 → "팀원 일정 보기"`
+            : '내가 참여하는 일정만 참여 인원과 함께 캘린더에 등록하고, 나머지 팀원 일정은 이 PC에만 보관합니다.'
+        }</span>
+      </section>
       <section class="sect"><h2>시작·알림</h2>
         <label class="checkline small"><input type="checkbox" id="s-autostart" ${prefs.autoStart ? 'checked' : ''}>Windows 시작 시 자동 실행 (트레이에서 조용히 시작)</label>
         <label class="checkline small"><input type="checkbox" id="s-tray" ${prefs.closeToTray ? 'checked' : ''}>창을 닫아도 트레이에서 계속 실행 (알림을 받으려면 켜 두세요)</label>
@@ -2132,6 +2146,11 @@ async function openSettings() {
 
   body.addEventListener('change', async (e) => {
     const t = e.target;
+    if (t.id === 's-teamme') {
+      st.teamMe = t.value.trim();
+      save();
+      return;
+    }
     if (t.id === 's-phoneev') {
       st.phoneEvents = t.checked;
       save();
@@ -2192,6 +2211,11 @@ async function openSettings() {
       await refreshGoogle();
       draw();
       toast('Google 캘린더가 연결되었습니다.');
+    }
+    if (e.target.closest('[data-teamimport]')) {
+      close();
+      importTeam();
+      return;
     }
     if (e.target.closest('[data-greconnect]')) {
       const msg = $('#s-gmsg2', body);
@@ -2412,8 +2436,282 @@ async function moveItem(it, delta) {
   }
 }
 
+/* ───────────── 팀 일정표(엑셀) ───────────── */
+async function importTeam() {
+  const r = await window.api.team.open();
+  if (!r.ok) return toast(`엑셀을 읽지 못했습니다: ${r.error}`);
+  if (!r.data) return;
+  let parsed;
+  try {
+    parsed = parseTeamWorkbook(r.data.sheets);
+  } catch (e) {
+    return toast(e.message);
+  }
+  const names = [...new Set(parsed.flatMap((p) => p.people.map((x) => x.name)))];
+  let me = settings().teamMe;
+  if (!names.includes(me)) {
+    me = await choose('내 이름 선택', '일정표에서 본인 이름을 골라 주세요.', names.map((n) => ({ label: n, value: n })));
+    if (!me) return;
+    settings().teamMe = me;
+  }
+  // 팀원 일정은 이 PC에만 보관 (오른쪽 클릭으로 보기)
+  S.data.team = { fileName: r.data.fileName, importedAt: Date.now(), parsed };
+  save();
+  previewTeamImport(parsed, me);
+}
+
+function previewTeamImport(parsed, me) {
+  const all = myEngagements(parsed, me);
+  const from = parsed.reduce((a, p) => (!a || p.from < a ? p.from : a), null);
+  const to = parsed.reduce((a, p) => (!a || p.to > a ? p.to : a), null);
+  let cutoff = settings().teamCutoff && settings().teamCutoff >= from && settings().teamCutoff <= to ? settings().teamCutoff : to;
+  const label = { new: '새 일정', changed: '변경', removed: '일정표에서 빠짐', same: '변경 없음' };
+  const color = { new: 'var(--accent)', changed: '#B26B00', removed: 'var(--sun)', same: 'var(--faint)' };
+  const fmt = (a, b) => (a === b ? D.shortLabel(a) : `${D.shortLabel(a)} ~ ${D.shortLabel(b)}`);
+  let rows = [];
+
+  // 반영 기한 이후는 제외 (기한을 넘는 일정은 기한까지만)
+  const build = () => {
+    const mine = all
+      .filter((m) => m.start <= cutoff)
+      .map((m) => (m.end > cutoff ? { ...m, end: cutoff, cut: true } : m));
+    const existing = S.data.events.filter((e) => e.team);
+    const used = new Set();
+    rows = [];
+    for (const m of mine) {
+      const ex = existing.find((e) => !used.has(e) && sameClient(e.team.client, m.client) && e.date <= m.end && m.start <= e.endDate);
+      if (ex) {
+        used.add(ex);
+        const same = ex.date === m.start && ex.endDate === m.end && JSON.stringify(ex.people || []) === JSON.stringify(m.people);
+        rows.push({ kind: same ? 'same' : 'changed', m, ex });
+      } else rows.push({ kind: 'new', m });
+    }
+    for (const e of existing) {
+      if (!used.has(e) && e.date >= from && e.date <= cutoff) rows.push({ kind: 'removed', ex: e });
+    }
+    rows.sort((a, b) => (a.m?.start || a.ex.date).localeCompare(b.m?.start || b.ex.date));
+    return mine.length;
+  };
+
+  const cals = [['local', '이 PC에만 저장'], ...writableCalendars().map((c) => [c.id, `Google · ${c.summary}${c.primary ? ' (기본)' : ''}`])];
+  const calId = defaultCalendarId();
+  const { el, close } = openModal(
+    `<div class="mhead"><h1>팀 일정표 가져오기 — ${h(me)}</h1><button type="button" class="btn ghost icon" data-close aria-label="닫기">✕</button></div>
+     <div class="mbody">
+       <div class="small">${h(parsed.map((p) => `${p.title || p.sheet}${p.asOf ? ` (${D.shortLabel(p.asOf)} 현재)` : ''}`).join(', '))} · 일정표 기간 ${h(fmt(from, to))}</div>
+       <div class="grid2">
+         <div class="fld"><label class="lbl" for="ti-cut">반영 기한 (이 날짜까지만 반영)</label><input type="date" class="inp" id="ti-cut" value="${cutoff}" min="${from}" max="${to}"></div>
+         <div class="fld"><label class="lbl" for="ti-cal">등록할 캘린더</label><select class="inp" id="ti-cal">${cals
+           .map(([v, t]) => `<option value="${h(v)}" ${v === calId ? 'selected' : ''}>${h(t)}</option>`)
+           .join('')}</select></div>
+       </div>
+       <div class="note">내가 참여하는 일정만 등록됩니다. 참여 인원은 같은 기간에 같은 회사 일정이 있는 팀원, 인차지(*)는 메모에 적습니다. 반영 기한 이후의 일정은 등록·변경·삭제하지 않습니다. 다른 팀원 일정은 캘린더에 등록하지 않고 이 PC에만 보관합니다.</div>
+       <div class="small" id="ti-sum"></div>
+       <div id="ti-list" style="display:flex;flex-direction:column;border:1px solid var(--line);border-radius:8px;max-height:42vh;overflow:auto"></div>
+     </div>
+     <div class="mfoot"><div class="spacer"></div><button type="button" class="btn" data-close>취소</button><button type="button" class="btn primary" data-apply>적용</button></div>`,
+    { cls: 'wide' }
+  );
+  const drawList = () => {
+    const n = build();
+    const counts = { new: 0, changed: 0, removed: 0, same: 0 };
+    rows.forEach((x) => counts[x.kind]++);
+    $('#ti-sum', el).textContent = `${D.shortLabel(cutoff)}까지 내 일정 ${n}건 — 새 일정 ${counts.new} · 변경 ${counts.changed} · 빠짐 ${counts.removed} · 변경 없음 ${counts.same}`;
+    $('#ti-list', el).innerHTML =
+      rows
+        .map(
+          (x, i) => `<label class="row gap10" style="padding:8px 12px;border-bottom:1px solid #EEECE7;align-items:flex-start;${x.kind === 'same' ? 'opacity:.6' : ''}">
+            <input type="checkbox" data-ti="${i}" ${x.kind === 'same' ? 'disabled' : 'checked'} style="margin-top:3px;width:16px;height:16px;accent-color:var(--accent)">
+            <span class="grow" style="display:flex;flex-direction:column;gap:2px">
+              <span><b style="color:${color[x.kind]};font-size:12px;margin-right:6px">${label[x.kind]}</b>${h(x.m ? x.m.title : x.ex.title)}</span>
+              <span class="xs muted">${
+                x.m
+                  ? `${fmt(x.m.start, x.m.end)}${x.m.cut ? ' (반영 기한까지만)' : ''}${
+                      x.kind === 'changed' && (x.ex.date !== x.m.start || x.ex.endDate !== x.m.end) ? ` (기존 ${fmt(x.ex.date, x.ex.endDate)})` : ''
+                    } · 참여: ${h(x.m.people.join(', ') || '없음')}${x.m.leader ? ` · 인차지: ${h(x.m.leader)}` : ''}`
+                  : `${fmt(x.ex.date, x.ex.endDate)} · 체크하면 캘린더에서 삭제`
+              }</span>
+            </span></label>`
+        )
+        .join('') || '<div class="empty">반영할 일정이 없습니다.</div>';
+  };
+  drawList();
+  el.addEventListener('change', (e) => {
+    if (e.target.id !== 'ti-cut') return;
+    const v = e.target.value;
+    cutoff = v && v >= from ? (v > to ? to : v) : from;
+    drawList();
+  });
+  el.addEventListener('click', async (e) => {
+    if (e.target.closest('[data-close]')) return close();
+    if (!e.target.closest('[data-apply]')) return;
+    const cal = $('#ti-cal', el).value;
+    const picked = $$('[data-ti]', el).filter((c) => c.checked).map((c) => rows[+c.dataset.ti]);
+    settings().teamCutoff = cutoff;
+    close();
+    await applyTeamImport(picked, cal);
+  });
+}
+
+function teamMemo(m) {
+  return [m.leader ? `인차지: ${m.leader}` : '', `팀 일정표${m.asOf ? `(${D.shortLabel(m.asOf)} 현재)` : ''}에서 가져옴`].filter(Boolean).join('\n');
+}
+
+async function applyTeamImport(picked, calendarId) {
+  const touched = [];
+  for (const x of picked) {
+    if (x.kind === 'removed') {
+      S.data.events = S.data.events.filter((e) => e !== x.ex);
+      if (x.ex.calendarId !== 'local') {
+        const ids = remoteIds(x.ex);
+        if (S.g.connected) await deleteRemote(x.ex.calendarId, ids);
+        else ids.forEach((id) => settings().pendingDeletes.push({ calendarId: x.ex.calendarId, id }));
+      }
+      continue;
+    }
+    const m = x.m;
+    if (x.kind === 'changed') {
+      const ev = x.ex;
+      ev.date = m.start;
+      ev.endDate = m.end;
+      ev.people = m.people;
+      ev.memo = teamMemo(m);
+      ev.team = { client: m.client, key: m.key, asOf: m.asOf };
+      ev.updatedAt = Date.now();
+      ev.sync = ev.calendarId === 'local' ? 'ok' : 'pending';
+      touched.push(ev);
+      continue;
+    }
+    const sim = findSimilar(m.title);
+    const ev = {
+      id: uid(),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      title: m.title,
+      calType: 'solar',
+      date: m.start,
+      endDate: m.end,
+      allDay: true,
+      startTime: null,
+      endTime: null,
+      repeat: 'none',
+      alarm: null,
+      place: sim?.place || '',
+      people: m.people,
+      memo: teamMemo(m),
+      exdates: [],
+      calendarId,
+      sync: calendarId === 'local' ? 'ok' : 'pending',
+      team: { client: m.client, key: m.key, asOf: m.asOf },
+    };
+    remember(ev.title, ev.place, ev.people);
+    S.data.events.push(ev);
+    touched.push(ev);
+  }
+  save();
+  renderAll();
+  for (const ev of touched) if (ev.calendarId !== 'local') await pushEvent(ev);
+  renderAll();
+  toast(`팀 일정표를 반영했습니다. (${picked.length}건)`);
+}
+
+/** 오른쪽 클릭 메뉴 */
+function openContextMenu(x, y, date) {
+  $('#ctxMenu')?.remove();
+  const m = document.createElement('div');
+  m.id = 'ctxMenu';
+  m.className = 'ctxmenu';
+  m.innerHTML = `
+    ${date ? `<button type="button" data-cm="team">팀원 일정 보기 (${h(D.shortLabel(date))})</button>` : ''}
+    ${date ? `<button type="button" data-cm="new">새 일정</button>` : ''}
+    <div class="sep"></div>
+    <button type="button" data-cm="import">팀 일정표 가져오기…</button>`;
+  document.body.appendChild(m);
+  const r = m.getBoundingClientRect();
+  m.style.left = `${Math.min(x, innerWidth - r.width - 8)}px`;
+  m.style.top = `${Math.min(y, innerHeight - r.height - 8)}px`;
+  const off = (e) => {
+    if (e.type === 'keydown' && e.key !== 'Escape') return;
+    if (e.type === 'mousedown' && m.contains(e.target)) return;
+    m.remove();
+    document.removeEventListener('mousedown', off, true);
+    document.removeEventListener('keydown', off, true);
+  };
+  setTimeout(() => {
+    document.addEventListener('mousedown', off, true);
+    document.addEventListener('keydown', off, true);
+  });
+  m.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-cm]');
+    if (!b) return;
+    m.remove();
+    if (b.dataset.cm === 'team') openTeamView(date);
+    else if (b.dataset.cm === 'new') openEventDialog({ date });
+    else importTeam();
+  });
+}
+
+/** 팀원 일정 보기: 선택한 날짜가 있는 주 */
+function openTeamView(date) {
+  const team = S.data.team?.parsed;
+  if (!team) {
+    toast('먼저 팀 일정표 엑셀을 가져오세요. (오른쪽 클릭 → 팀 일정표 가져오기)');
+    return;
+  }
+  let cur = date;
+  const me = settings().teamMe;
+  const { el, close } = openModal('<div id="tvBody"></div>', { cls: 'xwide' });
+  const draw = () => {
+    const ws = D.addDays(cur, -((D.dow(cur) + 6) % 7)); // 월요일 시작
+    const days = Array.from({ length: 7 }, (_, i) => D.addDays(ws, i));
+    const names = [...new Set(team.flatMap((p) => p.people.map((x) => x.name)))];
+    const cell = (name, d) => {
+      const hit = teamOn(team, d).find((r) => r.name === name);
+      if (!hit || !hit.items.length) return '';
+      return hit.items
+        .map((it) => `<span class="tchip${it.lead ? ' lead' : ''}" title="${h(it.raw)} ${h(D.shortLabel(it.start))}~${h(D.shortLabel(it.end))}">${h(it.text)}${it.lead ? ' ★' : ''}</span>`)
+        .join('');
+    };
+    const inRange = team.some((p) => days.some((d) => d >= p.from && d <= p.to));
+    $('#tvBody', el).innerHTML = `
+      <div class="mhead"><h1>팀원 일정</h1>
+        <div class="row gap4"><button type="button" class="btn sq" data-w="-7" aria-label="이전 주">‹</button><button type="button" class="btn" data-w="0">${h(D.shortLabel(date))}</button><button type="button" class="btn sq" data-w="7" aria-label="다음 주">›</button></div>
+        <button type="button" class="btn ghost icon" data-close aria-label="닫기">✕</button></div>
+      <div class="mbody" style="padding:12px 16px">
+        ${inRange ? '' : '<div class="warn">이 주는 가져온 팀 일정표의 기간 밖입니다.</div>'}
+        <div style="overflow:auto">
+        <table class="tview">
+          <thead><tr><th></th>${days
+            .map((d) => `<th class="${d === date ? 'sel' : ''} ${D.dow(d) === 0 || D.dow(d) === 6 ? 'we' : ''}">${D.parts(d).m}/${D.parts(d).d} (${D.DOW_KO[D.dow(d)]})</th>`)
+            .join('')}</tr></thead>
+          <tbody>${names
+            .map(
+              (n) => `<tr class="${n === me ? 'me' : ''}"><th>${h(n)}</th>${days
+                .map((d) => `<td class="${d === date ? 'sel' : ''} ${D.dow(d) === 0 || D.dow(d) === 6 ? 'we' : ''}">${cell(n, d)}</td>`)
+                .join('')}</tr>`
+            )
+            .join('')}</tbody>
+        </table></div>
+        <div class="note">★ 인차지 · ${h(S.data.team.fileName)} 기준 · 이 정보는 이 PC에만 보관되며 캘린더에는 등록하지 않습니다.</div>
+      </div>`;
+  };
+  draw();
+  el.addEventListener('click', (e) => {
+    if (e.target.closest('[data-close]')) return close();
+    const w = e.target.closest('[data-w]');
+    if (w) {
+      cur = +w.dataset.w === 0 ? date : D.addDays(cur, +w.dataset.w);
+      draw();
+    }
+  });
+}
+
 function bindDrag() {
   const body = $('#calBody');
+  body.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    openContextMenu(e.clientX, e.clientY, dateAtPoint(e.clientX, e.clientY));
+  });
   body.addEventListener('dragstart', (e) => {
     const chip = e.target.closest('[data-item][draggable="true"]');
     if (!chip) return;

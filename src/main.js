@@ -245,6 +245,21 @@ app.whenReady().then(() => {
   ipcMain.handle('t:patch', wrap((list, id, task) => google.patchTask(list, id, task)));
   ipcMain.handle('t:delete', wrap((list, id) => google.deleteTask(list, id)));
   ipcMain.handle('push:init', wrap(() => pushHub.init()));
+  ipcMain.handle(
+    'team:open',
+    wrap(async () => {
+      const r = process.env.ST_TEAM_FILE // 개발용 테스트 경로
+        ? { canceled: false, filePaths: [process.env.ST_TEAM_FILE] }
+        : await dialog.showOpenDialog(win, {
+        title: '팀 일정표 엑셀 선택',
+        filters: [{ name: '엑셀', extensions: ['xlsx', 'xlsm'] }],
+        properties: ['openFile'],
+      });
+      if (r.canceled || !r.filePaths[0]) return null;
+      const { readXlsx } = require('./xlsx');
+      return { fileName: path.basename(r.filePaths[0]), sheets: readXlsx(fs.readFileSync(r.filePaths[0])) };
+    })
+  );
   ipcMain.handle('push:notify', wrap((msg) => pushHub.notify(msg)));
 
   createWindow();
