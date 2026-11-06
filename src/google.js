@@ -279,6 +279,10 @@ class GoogleCalendar {
     return items;
   }
 
+  getEvent(calendarId, eventId) {
+    return this.api('GET', `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`);
+  }
+
   insertEvent(calendarId, ev) {
     return this.api('POST', `/calendars/${encodeURIComponent(calendarId)}/events?sendUpdates=none`, ev);
   }

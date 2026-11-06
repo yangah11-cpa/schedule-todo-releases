@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('api', {
   info: call('app:info'),
   focus: call('app:focus'),
   prefs: { get: call('prefs:get'), set: call('prefs:set') },
+  push: { init: call('push:init'), notify: call('push:notify') },
   patch: {
     state: call('patch:state'),
     apply: call('patch:apply'),
@@ -30,6 +31,7 @@ contextBridge.exposeInMainWorld('api', {
     disconnect: call('g:disconnect'),
     calendars: call('g:calendars'),
     events: call('g:events'),
+    get: call('g:get'),
     insert: call('g:insert'),
     patch: call('g:patch'),
     remove: call('g:delete'),

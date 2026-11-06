@@ -144,5 +144,7 @@ export function fromGoogle(item, cal) {
     alarm: item.reminders?.overrides?.[0]?.minutes ?? null,
     appId: priv.stApp || null,
     htmlLink: item.htmlLink,
+    updated: item.updated || null,
+    lunarSeries: (item.extendedProperties?.private || {}).stYear ? true : false,
   };
 }

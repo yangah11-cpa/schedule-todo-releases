@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Tray, nativeImage } = 
 const fs = require('fs');
 const path = require('path');
 const { GoogleCalendar } = require('./google');
+const { PushHub } = require('./pushhub');
 
 app.setAppUserModelId('com.yangah.scheduletodo');
 app.commandLine.appendSwitch('lang', 'ko-KR');
@@ -16,6 +17,7 @@ const stateFile = path.join(dataDir, 'window.json');
 const prefsFile = path.join(dataDir, 'app-prefs.json');
 let win;
 let google;
+let pushHub;
 let tray = null;
 let quitting = false;
 const startHidden = process.argv.includes('--hidden');
@@ -177,6 +179,7 @@ app.whenReady().then(() => {
     return p;
   });
   google = new GoogleCalendar(dataDir);
+  pushHub = new PushHub(google, dataDir);
 
   ipcMain.handle('data:load', () => loadData());
   ipcMain.handle('data:save', (_e, d) => {
@@ -233,6 +236,7 @@ app.whenReady().then(() => {
   ipcMain.handle('g:disconnect', wrap(() => google.disconnect()));
   ipcMain.handle('g:calendars', wrap(() => google.listCalendars()));
   ipcMain.handle('g:events', wrap((cal, a, b) => google.listEvents(cal, a, b)));
+  ipcMain.handle('g:get', wrap((cal, id) => google.getEvent(cal, id)));
   ipcMain.handle('g:insert', wrap((cal, ev) => google.insertEvent(cal, ev)));
   ipcMain.handle('g:patch', wrap((cal, id, ev) => google.patchEvent(cal, id, ev)));
   ipcMain.handle('g:delete', wrap((cal, id) => google.deleteEvent(cal, id)));
@@ -240,6 +244,8 @@ app.whenReady().then(() => {
   ipcMain.handle('t:insert', wrap((list, task, parent, prev) => google.insertTask(list, task, parent, prev)));
   ipcMain.handle('t:patch', wrap((list, id, task) => google.patchTask(list, id, task)));
   ipcMain.handle('t:delete', wrap((list, id) => google.deleteTask(list, id)));
+  ipcMain.handle('push:init', wrap(() => pushHub.init()));
+  ipcMain.handle('push:notify', wrap((msg) => pushHub.notify(msg)));
 
   createWindow();
   setupAutoUpdate();

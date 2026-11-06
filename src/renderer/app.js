@@ -22,6 +22,7 @@ const DEFAULT_SETTINGS = {
   pendingDeletes: [],
   pendingTaskDeletes: [],
   tasksSync: true,
+  phoneEvents: false,
   lastAlarmCheck: null,
 };
 
@@ -699,6 +700,7 @@ async function pushEvent(ev) {
     } else {
       const r = await upsertRemote(ev.calendarId, ev.google?.id, solarPayload(ev));
       ev.google = { calendarId: ev.calendarId, id: r.id };
+      ev.syncedAt = Date.parse(r.updated || '') || Date.now();
     }
     ev.sync = 'ok';
     ev.syncError = null;
@@ -756,6 +758,7 @@ async function refreshGoogle() {
       );
       S.gEvents = res.flat();
       learnFromGoogle();
+      await pullOwnEvents();
       syncTasks();
       S.gRange = { from, to };
       S.lastSync = Date.now();
@@ -771,6 +774,56 @@ async function refreshGoogle() {
     }
   })();
   return refreshing;
+}
+
+/** 이 프로그램이 Google에 올린 일정을 휴대폰 등 다른 곳에서 고치거나 지운 경우 PC에도 반영
+ *  (반복이 없는 양력 일정만. 반복·음력 일정은 PC 쪽 설정이 기준) */
+async function pullOwnEvents() {
+  if (!S.gRange) return;
+  const byGid = new Map(S.gEvents.map((g) => [g.gid, g]));
+  const visible = new Set(S.calendars.filter(isCalVisible).map((c) => c.id));
+  let changed = false;
+  for (const ev of S.data.events.slice()) {
+    if (ev.calendarId === 'local' || ev.calType === 'lunar' || (ev.repeat && ev.repeat !== 'none')) continue;
+    if (ev.sync !== 'ok' || !ev.google?.id || !visible.has(ev.calendarId)) continue;
+    if (ev.endDate < S.gRange.from || ev.date > S.gRange.to) continue;
+    let g = byGid.get(ev.google.id);
+    if (!g) {
+      // 보이는 범위에 없으면 다른 날짜로 옮겨졌거나 지워진 것 → 직접 확인
+      const r = await window.api.google.get(ev.calendarId, ev.google.id);
+      if (!r.ok) {
+        if (r.status === 404 || r.status === 410) {
+          S.data.events = S.data.events.filter((x) => x !== ev);
+          changed = true;
+        }
+        continue;
+      }
+      if (r.data.status === 'cancelled') {
+        S.data.events = S.data.events.filter((x) => x !== ev);
+        changed = true;
+        continue;
+      }
+      g = fromGoogle(r.data, S.calendars.find((c) => c.id === ev.calendarId) || { id: ev.calendarId });
+    }
+    const remoteT = Date.parse(g.updated || '') || 0;
+    if (remoteT > (ev.syncedAt || 0) + 3000) {
+      Object.assign(ev, {
+        title: g.title,
+        memo: g.memo,
+        place: g.place || '',
+        people: g.people || [],
+        date: g.date,
+        endDate: g.endDate,
+        allDay: g.allDay,
+        startTime: g.allDay ? null : g.startTime,
+        endTime: g.allDay ? null : g.endTime,
+        syncedAt: remoteT,
+        updatedAt: Date.now(),
+      });
+      changed = true;
+    }
+  }
+  if (changed) save();
 }
 
 function maybeRefresh() {
@@ -1983,6 +2036,18 @@ async function openSettings() {
   const ver = await window.api.version();
   const info = await window.api.info();
   let prefs = await window.api.prefs.get();
+  if (S.g.connected && S.g.tasks) {
+    window.api.push.init().then((r) => {
+      if (r.ok) {
+        S.pushDevices = r.data.devices;
+        const el = $('#s-phone');
+        if (el) el.textContent = S.pushDevices.length ? `연결된 휴대폰: ${S.pushDevices.join(', ')}` : '연결된 휴대폰 없음 — 휴대폰 앱의 설정에서 "이 휴대폰으로 알림 받기"를 누르세요.';
+      } else {
+        const el = $('#s-phone');
+        if (el) el.textContent = `휴대폰 알림 준비 실패: ${r.error}`;
+      }
+    });
+  }
   const { el, close } = openModal(
     `<div class="mhead"><h1>설정</h1><button type="button" class="btn ghost icon" data-close aria-label="닫기">✕</button></div>
      <div class="mbody" id="setBody"></div>
@@ -2005,6 +2070,10 @@ async function openSettings() {
                   g.tasks
                     ? `<label class="checkline small"><input type="checkbox" id="s-tasks" ${st.tasksSync !== false ? 'checked' : ''}>할 일을 Google Tasks "내 할 일" 목록과 동기화</label>
                        <span class="note">휴대폰의 Google Tasks 앱이나 구글 캘린더 앱에서 보고, 추가하고, 완료할 수 있습니다. 제목·메모·기한 날짜·완료·하위 할 일이 동기화되고, 시간·반복 규칙·알림은 이 PC에만 보관됩니다.</span>
+                       <h2 style="font-size:14px;margin-top:6px">휴대폰 앱 알림</h2>
+                       <span class="small" id="s-phone">${S.pushDevices ? (S.pushDevices.length ? `연결된 휴대폰: ${h(S.pushDevices.join(', '))}` : '연결된 휴대폰 없음 — 휴대폰 앱의 설정에서 "이 휴대폰으로 알림 받기"를 누르세요.') : '확인 중…'}</span>
+                       <label class="checkline small"><input type="checkbox" id="s-phoneev" ${st.phoneEvents ? 'checked' : ''}>Google 캘린더 일정 알림도 휴대폰 앱으로 보내기 (구글 캘린더 앱 알림과 겹칠 수 있음)</label>
+                       <span class="note">할 일 알림은 항상 휴대폰 앱으로도 보냅니다. PC가 켜져 있고 이 프로그램이 실행 중일 때 전달됩니다.</span>
                        <span class="small ${S.taskError ? 'err' : 'muted'}" id="s-taskmsg">${S.taskError ? h(S.taskError) : S.taskSyncedAt ? `마지막 동기화: ${new Date(S.taskSyncedAt).toLocaleTimeString('ko-KR')}` : ''}</span>`
                     : `<span class="note">할 일을 휴대폰과 연동하려면 Google Cloud 콘솔에서 <button type="button" class="linkbtn" data-ext="https://console.cloud.google.com/apis/library/tasks.googleapis.com">Tasks API</button>를 "사용"으로 켠 뒤, 아래 버튼으로 다시 연결해 할 일 권한을 승인하세요.</span>
                        <div class="row gap8"><button type="button" class="btn primary" data-greconnect>할 일 권한 추가 (다시 연결)</button><span class="small muted" id="s-gmsg2"></span></div>`
@@ -2063,6 +2132,11 @@ async function openSettings() {
 
   body.addEventListener('change', async (e) => {
     const t = e.target;
+    if (t.id === 's-phoneev') {
+      st.phoneEvents = t.checked;
+      save();
+      return;
+    }
     if (t.id === 's-tasks') {
       st.tasksSync = t.checked;
       save();
@@ -2132,6 +2206,8 @@ async function openSettings() {
       if (S.g.tasks) {
         toast('할 일 권한이 추가되었습니다. 할 일을 Google Tasks와 동기화합니다.');
         await syncTasks();
+        const pr = await window.api.push.init();
+        if (pr.ok) S.pushDevices = pr.data.devices;
         draw();
       } else toast('할 일 권한이 승인되지 않았습니다. 로그인 화면에서 할 일 항목도 허용해 주세요.');
       return;
@@ -2191,6 +2267,10 @@ function checkAlarms() {
   const today = D.today();
   const from = D.addDays(today, -1);
   const to = D.addDays(today, 8);
+  const phone = (title, body, tab) => {
+    if (!S.g.connected || !S.g.tasks) return;
+    window.api.push.notify({ title, body, tag: `${title}|${body}`, tab }).catch(() => {});
+  };
   const notify = (title, body) => {
     try {
       const n = new Notification(title, { body, requireInteraction: true });
@@ -2199,19 +2279,28 @@ function checkAlarms() {
       /* 무시 */
     }
   };
+  const fresh = (at) => now - at < 30 * 60000; // 휴대폰에는 30분 이내 알림만 (PC가 꺼져 있다 켜졌을 때 몰아서 보내지 않게)
   for (const ev of S.data.events) {
-    if (ev.calendarId !== 'local' || ev.alarm === null || ev.alarm === undefined) continue;
+    if (ev.alarm === null || ev.alarm === undefined) continue;
+    const local = ev.calendarId === 'local';
+    if (!local && !st.phoneEvents) continue; // 구글 캘린더 일정은 구글 캘린더 앱 알림 사용(선택 시 휴대폰 앱으로도)
     for (const o of expandEvent(ev, from, to)) {
       const start = D.toDateTime(o.date, ev.allDay ? '00:00' : ev.startTime).getTime();
       const at = start - ev.alarm * 60000;
-      if (at > since && at <= now) notify(ev.title, `${D.label(o.date)}${ev.allDay ? '' : ` ${ev.startTime}`}${ev.place ? ` · ${ev.place}` : ''}`);
+      if (!(at > since && at <= now)) continue;
+      const body = `${D.label(o.date)}${ev.allDay ? '' : ` ${ev.startTime}`}${ev.place ? ` · ${ev.place}` : ''}`;
+      if (local) notify(ev.title, body);
+      if (fresh(at)) phone(ev.title, body, 'cal');
     }
   }
   for (const t of S.data.todos) {
     const alarm = todoAlarm(t);
     if (t.done || t.deleted || !t.due || alarm === null) continue;
     const at = D.toDateTime(t.due, t.time || '00:00').getTime() - alarm * 60000;
-    if (at > since && at <= now) notify(`할 일: ${t.title}`, `${t.due === D.today() ? '오늘' : D.label(t.due)}${t.time ? ` ${t.time}` : ''}까지`);
+    if (!(at > since && at <= now)) continue;
+    const body = `${t.due === D.today() ? '오늘' : D.label(t.due)}${t.time ? ` ${t.time}` : ''}까지`;
+    notify(`할 일: ${t.title}`, body);
+    if (fresh(at)) phone(`할 일: ${t.title}`, body, 'todo');
   }
   st.lastAlarmCheck = now;
 }
@@ -2586,6 +2675,7 @@ async function init() {
     toast(`변경사항(${v})이 준비되었습니다. 상단의 "변경사항 적용"을 누르면 바로 반영됩니다.`);
   });
   if (S.g.connected) refreshGoogle();
+  if (S.g.connected && S.g.tasks) window.api.push.init().catch(() => {});
 
   let lastDay = D.today();
   setInterval(() => {
