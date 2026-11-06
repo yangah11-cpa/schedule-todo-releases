@@ -256,3 +256,8 @@ textarea.inp { height: auto; padding: 10px 12px; resize: vertical; }
 .todo-fill:hover span { opacity: 1; }
 .todo-list .empty { cursor: pointer; }
 .cal-head .nav { flex: none; }
+
+/* 드래그로 옮기기 */
+#calBody .chip[draggable="true"] { cursor: grab; }
+#calBody .chip.dragging { opacity: .45; }
+.dbg.droptarget, .wbg.droptarget { background: #EAF1FC !important; box-shadow: inset 0 0 0 2px #9DB8EA; }

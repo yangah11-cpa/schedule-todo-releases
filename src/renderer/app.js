@@ -186,6 +186,13 @@ function byDay(items, from, to) {
   return map;
 }
 
+/** 드래그로 옮길 수 있는 항목인지 */
+function movable(it) {
+  if (it.kind === 'event' || it.kind === 'todo') return true;
+  if (it.kind === 'gevent') return !!it.g.writable && !it.g.holidayCal;
+  return false;
+}
+
 function chipHtml(it, day) {
   let label = it.title;
   if (it.kind === 'event' || it.kind === 'gevent') {
@@ -196,7 +203,7 @@ function chipHtml(it, day) {
   const dot = it.color ? `<span class="cdot" style="background:${h(it.color)}"></span>` : '';
   const cls = `chip ${it.cls}${it.done ? ' done' : ''}${it.pending ? ' pending' : ''}`;
   if (it.kind === 'holiday') return `<span class="${cls}" title="${h(it.title)}">${h(label)}</span>`;
-  return `<button type="button" class="${cls}" data-item="${it.idx}" title="${h(label)}">${dot}${h(label)}</button>`;
+  return `<button type="button" class="${cls}" data-item="${it.idx}" title="${h(label)}"${movable(it) ? ' draggable="true"' : ''}>${dot}${h(label)}</button>`;
 }
 
 const isSpan = (it) => it.endDate > it.date;
@@ -249,7 +256,7 @@ function segHtml(sg, row) {
   let style = `grid-column:${sg.col + 1} / span ${sg.span};grid-row:${row}`;
   if (bar && it.color) style += `;background:${it.color};color:#fff`;
   const dot = !bar && it.color ? `<span class="cdot" style="background:${h(it.color)}"></span>` : '';
-  return `<button type="button" class="${cls}" data-item="${it.idx}" title="${h(label)}" style="${h(style)}">${dot}${h(label)}</button>`;
+  return `<button type="button" class="${cls}" data-item="${it.idx}" title="${h(label)}" style="${h(style)}"${movable(it) ? ' draggable="true"' : ''}>${dot}${h(label)}</button>`;
 }
 
 /* ───────────── 렌더링: 상단 상태 ───────────── */
@@ -1871,6 +1878,156 @@ function checkAlarms() {
   st.lastAlarmCheck = now;
 }
 
+/* ───────────── 드래그로 일정 옮기기 ───────────── */
+function dateAtPoint(x, y) {
+  for (const el of document.elementsFromPoint(x, y)) {
+    if (!el.closest('#calBody')) continue;
+    const c = el.closest('.dbg, .dhead, .wbg, .wlist, .whead, .wcol');
+    if (c) return c.dataset.date || c.dataset.goday || null;
+  }
+  return null;
+}
+
+const drag = { item: null, from: null, over: null };
+function markDrop(date) {
+  if (drag.over === date) return;
+  drag.over = date;
+  $$('#calBody .droptarget').forEach((x) => x.classList.remove('droptarget'));
+  if (date) $$(`#calBody .dbg[data-date="${date}"], #calBody .wbg[data-date="${date}"]`).forEach((x) => x.classList.add('droptarget'));
+}
+
+async function moveItem(it, delta) {
+  if (!delta) return;
+  if (it.kind === 'todo') {
+    it.t.due = D.addDays(it.t.due, delta);
+    it.t.touched = true;
+    save();
+    renderAll();
+    toast(`할 일을 ${D.shortLabel(it.t.due)}로 옮겼습니다.`);
+    return;
+  }
+  if (it.kind === 'gevent') {
+    const g = it.g;
+    const payload = timeRange(D.addDays(g.date, delta), D.addDays(g.endDate, delta), { allDay: g.allDay, startTime: g.startTime, endTime: g.endTime });
+    try {
+      await gcall('patch', g.calendarId, g.gid, payload); // 반복 일정이면 이 날짜만 옮겨짐
+    } catch (e) {
+      toast(`옮기지 못했습니다: ${e.message}`);
+      return;
+    }
+    await refreshGoogle();
+    toast(`"${g.title}" 일정을 ${D.shortLabel(D.addDays(g.date, delta))}로 옮겼습니다.`);
+    return;
+  }
+  // 이 프로그램의 일정
+  const ev = it.ev;
+  const occ = it.date;
+  const newOcc = D.addDays(occ, delta);
+  const repeating = ev.repeat && ev.repeat !== 'none';
+  let mode = 'all';
+  if (repeating) {
+    mode = await choose('반복 일정 옮기기', `"${ev.title}"\n${D.label(occ)} → ${D.label(newOcc)}`, [
+      { label: '이 날짜만', value: 'one' },
+      { label: '반복 전체', value: 'all' },
+    ]);
+    if (!mode) return;
+  }
+  if (mode === 'one') {
+    // 이 날짜는 반복에서 빼고, 옮긴 날짜에 단독 일정으로 새로 만듦
+    ev.exdates = [...new Set([...(ev.exdates || []), occ])];
+    ev.sync = ev.calendarId === 'local' ? 'ok' : 'pending';
+    const dur = D.diffDays(it.date, it.endDate);
+    const copy = {
+      ...JSON.parse(JSON.stringify(ev)),
+      id: uid(),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      calType: 'solar',
+      date: newOcc,
+      endDate: D.addDays(newOcc, dur),
+      repeat: 'none',
+      exdates: [],
+      google: null,
+      sync: ev.calendarId === 'local' ? 'ok' : 'pending',
+    };
+    delete copy.lunar;
+    S.data.events.push(copy);
+    save();
+    renderAll();
+    if (ev.calendarId !== 'local') {
+      await pushEvent(ev);
+      await pushEvent(copy);
+      renderAll();
+    }
+    return;
+  }
+  ev.date = D.addDays(ev.date, delta);
+  ev.endDate = D.addDays(ev.endDate || ev.date, delta);
+  if (ev.calType === 'lunar') {
+    // 옮긴 날짜 기준으로 음력 월·일을 다시 계산
+    const target = repeating ? newOcc : ev.date;
+    const l = solarToLunar(target);
+    if (l) ev.lunar = { ...ev.lunar, month: l.month, day: l.day, leap: l.leap, baseYear: repeating ? ev.lunar.baseYear : D.parts(target).y };
+    if (repeating) {
+      const r = lunarToSolar(ev.lunar.baseYear, ev.lunar.month, ev.lunar.day, ev.lunar.leap);
+      if (r) ev.date = ev.endDate = r.date;
+    }
+  }
+  ev.exdates = (ev.exdates || []).map((d) => D.addDays(d, delta));
+  ev.updatedAt = Date.now();
+  ev.sync = ev.calendarId === 'local' ? 'ok' : 'pending';
+  save();
+  renderAll();
+  if (ev.calType === 'lunar' && ev.lunar) toast(`음력 ${ev.lunar.leap ? '윤' : ''}${ev.lunar.month}월 ${ev.lunar.day}일로 바뀌었습니다.`);
+  if (ev.calendarId !== 'local') {
+    await pushEvent(ev);
+    renderAll();
+  }
+}
+
+function bindDrag() {
+  const body = $('#calBody');
+  body.addEventListener('dragstart', (e) => {
+    const chip = e.target.closest('[data-item][draggable="true"]');
+    if (!chip) return;
+    const it = S.items.get(chip.dataset.item);
+    if (!it) return;
+    drag.item = it;
+    drag.from = dateAtPoint(e.clientX, e.clientY) || it.date;
+    // 여러 날 막대에서 잡은 위치가 일정 범위를 벗어나면 시작일 기준
+    if (drag.from < it.date || drag.from > it.endDate) drag.from = it.date;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', it.title);
+    chip.classList.add('dragging');
+  });
+  body.addEventListener('dragover', (e) => {
+    if (!drag.item) return;
+    const d = dateAtPoint(e.clientX, e.clientY);
+    if (!d) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    markDrop(d);
+  });
+  body.addEventListener('dragleave', (e) => {
+    if (!body.contains(e.relatedTarget)) markDrop(null);
+  });
+  body.addEventListener('drop', (e) => {
+    if (!drag.item) return;
+    e.preventDefault();
+    const d = dateAtPoint(e.clientX, e.clientY);
+    const it = drag.item;
+    const from = drag.from;
+    drag.item = null;
+    markDrop(null);
+    if (d && from) moveItem(it, D.diffDays(from, d));
+  });
+  body.addEventListener('dragend', () => {
+    drag.item = null;
+    markDrop(null);
+    $$('#calBody .dragging').forEach((x) => x.classList.remove('dragging'));
+  });
+}
+
 /* ───────────── 이벤트 연결 ───────────── */
 function bind() {
   $('#btnPrev').onclick = () => move(-1);
@@ -1901,6 +2058,7 @@ function bind() {
     renderCalendar();
   };
 
+  bindDrag();
   $('#calBody').addEventListener('click', (e) => {
     const goday = e.target.closest('[data-goday]');
     if (goday) {
