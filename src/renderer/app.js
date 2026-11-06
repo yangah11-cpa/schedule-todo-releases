@@ -574,7 +574,18 @@ function openModal(html, { cls = '', onClose } = {}) {
     onClose?.();
   };
   const onKey = (e) => {
-    if (e.key === 'Escape' && root.lastElementChild === ov) close();
+    if (root.lastElementChild !== ov) return;
+    if (e.key === 'Escape') close();
+    // 저장 단축키: Ctrl+Enter 또는 Ctrl+S
+    else if ((e.ctrlKey || e.metaKey) && !e.isComposing && (e.key === 'Enter' || e.key === 's' || e.key === 'S' || e.code === 'KeyS')) {
+      const btn = ov.querySelector('[data-save]');
+      if (btn) {
+        e.preventDefault();
+        // 한글 입력 중인 글자가 반영되도록 포커스를 잠시 해제한 뒤 저장
+        document.activeElement?.blur?.();
+        setTimeout(() => btn.click(), 0);
+      }
+    }
   };
   document.addEventListener('keydown', onKey);
   ov.addEventListener('mousedown', (e) => {
@@ -866,8 +877,9 @@ function openEventDialog({ ev = null, g = null, date = null, occ = null } = {}) 
       ${ev || (g && !readonly) ? '<button type="button" class="btn danger" data-del>삭제</button>' : ''}
       ${g?.htmlLink ? '<button type="button" class="btn ghost" data-open-g>Google에서 열기</button>' : ''}
       <div class="spacer"></div>
+      <span class="note">Ctrl+Enter 저장</span>
       <button type="button" class="btn" data-close>취소</button>
-      <button type="button" class="btn primary" data-save>${readonly ? '닫기' : '저장'}</button>
+      <button type="button" class="btn primary" data-save title="Ctrl+Enter 또는 Ctrl+S">${readonly ? '닫기' : '저장'}</button>
     </div>`;
   const { el, close } = openModal(html);
   const form = $('#evForm', el);
@@ -1414,8 +1426,9 @@ function openTodoDialog(existing = null, preset = null) {
     <div class="mfoot">
       ${existing ? '<button type="button" class="btn danger" data-del>삭제</button>' : ''}
       <div class="spacer"></div>
+      <span class="note">Ctrl+Enter 저장</span>
       <button type="button" class="btn" data-close>취소</button>
-      <button type="button" class="btn primary" data-save>저장</button>
+      <button type="button" class="btn primary" data-save title="Ctrl+Enter 또는 Ctrl+S">저장</button>
     </div>`;
   const { el, close } = openModal(html, { cls: '' });
   const form = $('#tdForm', el);
