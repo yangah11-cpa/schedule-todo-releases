@@ -793,12 +793,27 @@ function findSimilar(title) {
   const tok = firstToken(key);
   const flat = stripCorp(key).replace(/\s/g, '');
   let best = null;
+  let bestScore = -1;
   for (const [t, v] of Object.entries(hist)) {
     const c = firstToken(t);
+    const tflat = stripCorp(t).replace(/\s/g, '');
     // 같은 회사: 첫 단어가 같거나, 띄어쓰기 없이 회사 이름으로 시작하는 제목
-    const same = c.length >= 2 && (c === tok || flat.startsWith(c) || (tok.length >= 2 && stripCorp(t).replace(/\s/g, '').startsWith(tok)));
-    if (!same) continue;
-    if (!best || v.at > best.at) best = { title: t, ...v };
+    let company = null;
+    if (c.length >= 2 && (c === tok || flat.startsWith(c))) company = c;
+    else if (tok.length >= 2 && tflat.startsWith(tok)) company = tok;
+    if (!company) continue;
+    // 업무(중간감사·기말감사·재고실사 등) = 회사 이름 뒤의 나머지
+    const work = flat.slice(company.length);
+    const pastWork = tflat.slice(company.length);
+    let score = 1; // 같은 회사
+    if (work.length >= 2 && pastWork.length >= 2) {
+      if (work === pastWork) score = 3; // 같은 회사 + 같은 업무
+      else if (work.includes(pastWork) || pastWork.includes(work)) score = 2; // 비슷한 업무 (예: 중간감사 2차)
+    }
+    if (score > bestScore || (score === bestScore && v.at > best.at)) {
+      best = { title: t, ...v };
+      bestScore = score;
+    }
   }
   return best;
 }
