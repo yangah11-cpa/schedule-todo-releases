@@ -284,3 +284,11 @@ textarea.inp { height: auto; padding: 10px 12px; resize: vertical; }
 .tchip.lead { background: #4A6FC0; color: #fff; font-weight: 600; }
 .tchip.cont { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -4px; }
 .tchip.more { border-top-right-radius: 0; border-bottom-right-radius: 0; margin-right: -4px; }
+/* 팀원 일정 칸: 눌러서 수정 */
+button.tchip { width: calc(100% + 0px); border: 0; font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+button.tchip.cont { width: calc(100% + 4px); }
+button.tchip.more { width: calc(100% + 4px); }
+button.tchip.cont.more { width: calc(100% + 8px); }
+button.tchip:hover { filter: brightness(0.96); box-shadow: inset 0 0 0 1px rgba(36, 89, 201, 0.35); }
+button.tchip small { display: block; font-size: 11px; opacity: 0.85; font-weight: 500; }
+button.tchip .ed { font-style: normal; font-size: 11px; opacity: 0.75; margin-left: 4px; }

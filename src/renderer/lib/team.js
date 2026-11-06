@@ -182,23 +182,23 @@ export function myEngagements(parsed, me) {
       for (const o of p.people) {
         if (o.name === me) continue;
         for (const oe of o.entries) {
-          if (overlap(e, oe) && sameClient(e.text, oe.text)) {
+          if (overlap(e, oe) && (sameClient(e.text, oe.text) || sameClient(e.orig || e.text, oe.orig || oe.text))) {
             if (!mates.includes(o.name)) mates.push(o.name);
             if (oe.lead && !leader) leader = o.name;
           }
         }
       }
-      const isClient = !NON_CLIENT.test(e.text);
+      const isClient = !NON_CLIENT.test(e.orig || e.text);
       out.push({
-        key: `${norm(e.text)}|${e.start}`,
+        key: `${norm(e.orig || e.text)}|${e.start}`, // 이름을 고쳐도 같은 일정으로 인식
         client: e.text,
-        title: isClient && p.workType ? `${e.text} ${p.workType}` : e.text,
+        title: e.work ? `${e.text} ${e.work}` : isClient && p.workType ? `${e.text} ${p.workType}` : e.text,
         start: e.start,
         end: e.end,
         people: mates,
         leader,
         lead: e.lead,
-        workType: p.workType,
+        workType: e.work || p.workType,
         asOf: p.asOf,
       });
     }

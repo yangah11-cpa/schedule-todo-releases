@@ -48,7 +48,8 @@ button { cursor: pointer; }
 .icon-btn.spin svg { animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.views { padding: 0 0 24px; }
+.views { padding: 0; }
+#viewTodo { padding-bottom: 24px; }
 .view[hidden] { display: none; }
 
 .tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; display: grid; grid-template-columns: 1fr 1fr 1fr; height: var(--tabbar-h); padding-bottom: var(--safe-b); background: var(--panel); border-top: 1px solid var(--line); }
@@ -250,3 +251,24 @@ textarea.inp { height: auto; min-height: 84px; padding: 10px 12px; resize: verti
 .wd .wdw { grid-row: 1 / span 2; font-size: 12px; color: var(--ink2); font-weight: 600; padding-top: 1px; }
 .wd .wdt { font-size: 14px; font-weight: 500; }
 .wd .wdm { font-size: 12px; color: var(--muted); }
+
+/* 일정 화면: 주간 일정 / 일정 상세 / 팀 일정 — 세로 크기 고정, 각 영역 안에서 스크롤 */
+#viewCal:not([hidden]) { display: flex; flex-direction: column; height: calc(100dvh - 56px - env(safe-area-inset-top, 0px) - var(--tabbar-h)); overflow: hidden; }
+#viewCal > .cal-nav { flex: 0 0 auto; }
+#viewCal > .wbox { flex: 0 0 34%; min-height: 0; overflow-y: auto; overscroll-behavior: contain; background: var(--panel); border-bottom: 1px solid var(--line); }
+#viewCal .hweek { min-height: 100%; border-bottom: 0; padding-bottom: 6px; }
+#viewCal .hweek .hd { position: sticky; top: 0; z-index: 2; background: var(--panel); padding: 3px 0 4px; }
+#viewCal .hweek .hd .dn { width: 26px; height: 26px; font-size: 15px; }
+#viewCal .hweek .hcol { min-height: 0; }
+#viewCal > .wdetail { flex: 0 0 24%; min-height: 0; display: flex; flex-direction: column; margin: 8px 8px 0; }
+.wdh { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 8px 8px 6px 12px; border-bottom: 1px solid #EEECE7; }
+.wdh b { font-size: 14px; }
+.wdh .sp { flex: 1; }
+.wdl { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.wdl .wd:first-child { border-top: 0; }
+.wdl .empty { padding: 14px 12px; }
+.mini-btn { border: 1px solid var(--line2); background: var(--panel); color: var(--accent-d); border-radius: 8px; height: 30px; padding: 0 10px; font-size: 12.5px; font-weight: 600; }
+.mini-btn:active { background: var(--soft); }
+.mini-btn:disabled { color: var(--faint); border-color: var(--line); }
+#viewCal > .team { flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin: 8px 8px 8px; }
+#viewCal > .team .team-h { position: sticky; top: -10px; z-index: 1; background: var(--panel); padding-top: 2px; }

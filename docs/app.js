@@ -30,6 +30,28 @@ const store = {
     }
   },
 };
+/** 클립보드 복사 (구형 브라우저는 임시 입력칸으로) */
+async function copyText(text, done) {
+  if (!text) return toast('복사할 장소가 없습니다.');
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand('copy');
+    } catch {
+      /* 무시 */
+    }
+    ta.remove();
+  }
+  toast(done);
+}
+
 function toast(msg) {
   const t = $('#toast');
   t.textContent = msg;
@@ -420,7 +442,7 @@ function renderCal() {
       <button type="button" class="nav-btn text" data-nav="0">이번 주</button>
       <button type="button" class="nav-btn" data-nav="1" aria-label="다음 주">›</button>
     </div>
-    <div class="hweek" id="weekWrap">`;
+    <div class="wbox"><div class="hweek" id="weekWrap">`;
   // 머리글: 요일·날짜·음력·휴일 (누르면 그날 새 일정)
   for (const [i, d] of days.entries()) {
     const w = D.dow(d);
@@ -476,19 +498,24 @@ function renderCal() {
     const tm = !e.allDay && e.startTime ? `<b>${h(e.startTime)}</b> ` : '';
     html += `<button type="button" class="hev${e.lunarSeries ? ' l' : ''}${g.n > 1 ? ' bar' : ''}${g.cont ? ' cont' : ''}${g.more ? ' more' : ''}" data-ev="${h(e.key)}" style="${pos}">${tm}${h(e.title)}</button>`;
   }
-  html += '</div>';
-  // 선택한 주의 일정 목록(자세히): 장소·참여 인원
-  const detail = segs.filter((g) => g.kind === 'ev' && (g.e.place || g.e.people?.length));
-  if (detail.length) {
-    html += `<div class="wdetail">${detail
-      .sort((x, y) => x.i - y.i)
+  html += '</div></div>';
+  // 선택한 주의 일정 목록(자세히): 장소·참여 인원 — 높이 고정, 안에서 스크롤
+  const detail = segs.filter((g) => g.kind === 'ev' && (g.e.place || g.e.people?.length)).sort((x, y) => x.i - y.i);
+  S.weekPlaces = [...new Set(detail.map((g) => (g.e.place || '').trim()).filter(Boolean))];
+  html += `<div class="wdetail"><div class="wdh"><b>일정 상세</b><span class="xs muted">${detail.length ? `${detail.length}건` : ''}</span><div class="sp"></div>
+      <button type="button" class="mini-btn" data-copyplaces ${S.weekPlaces.length ? '' : 'disabled'}>장소 복사${S.weekPlaces.length ? ` (${S.weekPlaces.length})` : ''}</button></div>
+    <div class="wdl">`;
+  if (!detail.length) html += '<div class="empty small">이 주에는 장소·참여 인원이 적힌 일정이 없습니다.</div>';
+  else {
+    html += `${detail
       .map((g) => {
         const e = g.e;
         const when = e.date === e.endDate ? `${D.parts(e.date).m}/${D.parts(e.date).d}` : `${D.parts(e.date).m}/${D.parts(e.date).d}~${D.parts(e.endDate).m}/${D.parts(e.endDate).d}`;
         return `<button type="button" class="wd" data-ev="${h(e.key)}"><span class="wdw">${when}</span><span class="wdt">${h(e.title)}</span><span class="wdm">${h([e.place, e.people?.join(', ')].filter(Boolean).join(' · '))}</span></button>`;
       })
-      .join('')}</div>`;
+      .join('')}`;
   }
+  html += '</div></div>';
   html += renderTeamWeek(days);
   v.innerHTML = html;
 }
@@ -1294,6 +1321,7 @@ function bind() {
         .then(render)
         .catch((er) => toast(er.message));
     }
+    if (e.target.closest('[data-copyplaces]')) return copyText((S.weekPlaces || []).join('\n'), `장소 ${S.weekPlaces?.length || 0}곳을 복사했습니다.`);
     const day = e.target.closest('[data-day]');
     if (day) {
       S.sel = day.dataset.day;

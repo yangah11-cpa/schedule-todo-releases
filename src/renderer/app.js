@@ -2477,7 +2477,7 @@ async function importTeam() {
   if (!r.data) return;
   let parsed;
   try {
-    parsed = parseTeamWorkbook(r.data.sheets);
+    parsed = applyTeamEdits(parseTeamWorkbook(r.data.sheets));
   } catch (e) {
     return toast(e.message);
   }
@@ -2516,7 +2516,7 @@ async function uploadTeamForPhone(manual = false, quiet = false) {
     for (const person of p.people) {
       let ni = names.indexOf(person.name);
       if (ni < 0) ni = names.push(person.name) - 1;
-      for (const e of person.entries) entries.push([ni, e.text, dd(e.start), dd(e.end), e.lead ? 1 : 0]);
+      for (const e of person.entries) entries.push([ni, e.work ? `${e.text} ${e.work}` : e.text, dd(e.start), dd(e.end), e.lead ? 1 : 0]);
     }
   }
   const blob = JSON.stringify({
@@ -2766,21 +2766,21 @@ function openTeamView(date) {
     const cls = (d) => `${d === date ? 'sel' : ''} ${D.dow(d) === 0 || D.dow(d) === 6 ? 'we' : ''}`;
     const rowHtml = (name) => {
       const segs = [];
-      for (const p of team) {
+      for (const [pi, p] of team.entries()) {
         const person = p.people.find((x) => x.name === name);
         if (!person) continue;
-        for (const it of person.entries) {
+        for (const [ei, it] of person.entries.entries()) {
           if (it.end < ws || it.start > we) continue;
           const a = it.start < ws ? ws : it.start;
           const b = it.end > we ? we : it.end;
-          segs.push({ it, a, b, i: D.diffDays(ws, a), n: D.diffDays(a, b) + 1, cont: it.start < ws, more: it.end > we });
+          segs.push({ it, pi, ei, a, b, i: D.diffDays(ws, a), n: D.diffDays(a, b) + 1, cont: it.start < ws, more: it.end > we });
         }
       }
       segs.sort((x, y) => x.i - y.i || y.n - x.n);
       let html = '';
       let i = 0;
       const chip = (g) =>
-        `<span class="tchip${g.it.lead ? ' lead' : ''}${g.cont ? ' cont' : ''}${g.more ? ' more' : ''}" title="${h(g.it.text)} ${h(D.shortLabel(g.it.start))} ~ ${h(D.shortLabel(g.it.end))}${g.it.lead ? ' · 인차지' : ''}">${h(g.it.text)}</span>`;
+        `<button type="button" class="tchip${g.it.lead ? ' lead' : ''}${g.cont ? ' cont' : ''}${g.more ? ' more' : ''}${g.it.orig ? ' edited' : ''}" data-tedit="${g.pi}|${h(name)}|${g.ei}" title="${h(g.it.text)}${g.it.work ? ` · ${h(g.it.work)}` : ''} ${h(D.shortLabel(g.it.start))} ~ ${h(D.shortLabel(g.it.end))}${g.it.lead ? ' · 인차지' : ''} — 눌러서 회사 이름·업무 내용 수정">${h(g.it.text)}${g.it.orig ? '<i class="ed">✎</i>' : ''}${g.it.work ? `<small>${h(g.it.work)}</small>` : ''}</button>`;
       for (let k = 0; k < segs.length; k++) {
         const g = segs[k];
         if (g.i < i) continue; // 겹치는 일정은 앞 칸에 함께 표시됨
@@ -2806,16 +2806,102 @@ function openTeamView(date) {
           <thead><tr><th></th>${days.map((d) => `<th class="${cls(d)}">${D.parts(d).m}/${D.parts(d).d} (${D.DOW_KO[D.dow(d)]})</th>`).join('')}</tr></thead>
           <tbody>${names.map(rowHtml).join('')}</tbody>
         </table></div>
-        <div class="note"><span class="tchip lead" style="display:inline-block">짙은 색</span> 인차지 · ${h(S.data.team.fileName)} 기준 · 이 정보는 이 PC에만 보관되며 캘린더에는 등록하지 않습니다.</div>
+        <div class="note"><span class="tchip lead" style="display:inline-block">짙은 색</span> 인차지 · 일정을 누르면 회사 이름·업무 내용을 고칠 수 있습니다 · ${h(S.data.team.fileName)} 기준 · 이 정보는 이 PC(와 내 휴대폰 앱)에만 보관되며 캘린더에는 등록하지 않습니다.</div>
       </div>`;
   };
   draw();
   el.addEventListener('click', (e) => {
     if (e.target.closest('[data-close]')) return close();
+    const te = e.target.closest('[data-tedit]');
+    if (te) {
+      const [pi, name, ei] = te.dataset.tedit.split('|');
+      return editTeamEntry(+pi, name, +ei, draw);
+    }
     const w = e.target.closest('[data-w]');
     if (w) {
       cur = +w.dataset.w === 0 ? date : D.addDays(cur, +w.dataset.w);
       draw();
+    }
+  });
+}
+
+/* 팀 일정표 항목 수정 (회사 이름·업무 내용). 원문 기준으로 기억해 두었다가 다시 가져와도 그대로 적용 */
+const teamEditKey = (name, orig, start) => `${name}|${orig}|${start}`;
+function applyTeamEdits(parsed) {
+  const ed = S.data.teamEdits || {};
+  for (const p of parsed)
+    for (const person of p.people)
+      for (const e of person.entries) {
+        const x = ed[teamEditKey(person.name, e.orig || e.text, e.start)];
+        if (!x) continue;
+        if (!e.orig) e.orig = e.text;
+        e.text = x.text || e.orig;
+        e.work = x.work || '';
+      }
+  return parsed;
+}
+function editTeamEntry(pi, name, ei, redraw) {
+  const p = S.data.team.parsed[pi];
+  const person = p?.people.find((x) => x.name === name);
+  const it = person?.entries[ei];
+  if (!it) return;
+  const orig = it.orig || it.text;
+  const norm = (x) => String(x || '').replace(/\s+/g, '');
+  // 같은 회사(원문)·겹치는 기간의 다른 팀원 일정
+  const mates = [];
+  for (const o of p.people) {
+    if (o === person) continue;
+    o.entries.forEach((oe, k) => {
+      if (norm(oe.orig || oe.text) === norm(orig) && oe.start <= it.end && it.start <= oe.end) mates.push({ o, oe, k });
+    });
+  }
+  const { el, close } = openModal(
+    `<div class="mhead"><h1>팀 일정 수정</h1><button type="button" class="btn ghost icon" data-x aria-label="닫기">✕</button></div>
+     <div class="mbody">
+       <div class="small muted" style="margin-bottom:10px">${h(name)} · ${h(D.shortLabel(it.start))}${it.end !== it.start ? ` ~ ${h(D.shortLabel(it.end))}` : ''}${it.lead ? ' · 인차지' : ''}${it.orig ? ` · 엑셀 원문: ${h(it.orig)}` : ''}</div>
+       <div class="fld"><label class="lbl" for="te-c">회사 이름</label><input class="inp" id="te-c" value="${h(it.text)}"></div>
+       <div class="fld" style="margin-top:10px"><label class="lbl" for="te-w">업무 내용</label><input class="inp" id="te-w" value="${h(it.work || '')}" placeholder="${h(p.workType ? `${p.workType} (일정표 기본값)` : '예: 중간감사, 재고실사')}"></div>
+       ${mates.length ? `<label class="checkline small" style="margin-top:12px"><input type="checkbox" id="te-all" checked>같은 일정의 다른 팀원에게도 적용 (${h(mates.map((m) => m.o.name).join(', '))})</label>` : ''}
+       <div class="note" style="margin-top:8px">수정 내용은 이 PC에 기억되어 팀 일정표를 다시 가져와도 그대로 적용됩니다. 내 일정은 다음에 "팀 일정 등록"을 할 때 캘린더 제목에 반영됩니다.</div>
+     </div>
+     <div class="mfoot">${it.orig ? '<button type="button" class="btn" data-reset>원래대로</button>' : ''}<div class="spacer"></div><button type="button" class="btn" data-x>취소</button><button type="button" class="btn primary" data-save>저장</button></div>`,
+    { cls: 'narrow' }
+  );
+  setTimeout(() => $('#te-c', el)?.focus(), 0);
+  const commit = (text, work) => {
+    S.data.teamEdits ||= {};
+    const targets = [{ o: person, oe: it }, ...($('#te-all', el)?.checked ? mates : [])];
+    for (const { o, oe } of targets) {
+      const og = oe.orig || oe.text;
+      const k = teamEditKey(o.name, og, oe.start);
+      if ((text === og || !text) && !work) {
+        delete S.data.teamEdits[k];
+        oe.text = og;
+        delete oe.orig;
+        delete oe.work;
+      } else {
+        S.data.teamEdits[k] = { text: text || og, work };
+        oe.orig = og;
+        oe.text = text || og;
+        oe.work = work;
+      }
+    }
+    save();
+    S.data.team.uploadedAt = null;
+    uploadTeamForPhone(false, false);
+    close();
+    redraw();
+    toast('팀 일정을 수정했습니다.');
+  };
+  el.addEventListener('click', (e) => {
+    if (e.target.closest('[data-x]')) return close();
+    if (e.target.closest('[data-reset]')) return commit('', '');
+    if (e.target.closest('[data-save]')) return commit($('#te-c', el).value.trim(), $('#te-w', el).value.trim());
+  });
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.isComposing && e.target.matches('input.inp')) {
+      e.preventDefault();
+      $('[data-save]', el).click();
     }
   });
 }
