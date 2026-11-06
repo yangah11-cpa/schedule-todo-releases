@@ -780,7 +780,7 @@ function openEvent(e = null, date = S.sel) {
           ? `<div class="note">이전 일정 "${h(auto.from)}"을(를) 참고해 채웠습니다. <button type="button" class="linkbtn" data-autoclear style="padding:0">지우기</button></div>`
           : ''
       }
-      <div class="fld"><label class="lbl" for="e-place">장소</label><input class="inp" id="e-place" value="${h(f.place)}" placeholder="장소 또는 주소" ${readonly ? 'disabled' : ''}></div>
+      <div class="fld"><label class="lbl" for="e-place">장소</label><div class="inrow"><input class="inp" id="e-place" value="${h(f.place)}" placeholder="장소 또는 주소" ${readonly ? 'disabled' : ''}><button type="button" class="mini-btn copy" data-copyplace aria-label="장소 복사">복사</button></div></div>
       <div class="fld"><label class="lbl" for="e-people">참여 인원</label>
         <div class="chipsbox">${f.people
           .map((p, i) => `<span class="person">${h(p)}${readonly ? '' : `<button type="button" data-rmp="${i}" aria-label="${h(p)} 삭제">×</button>`}</span>`)
@@ -908,6 +908,10 @@ function openEvent(e = null, date = S.sel) {
     if (ev.target.id === 'e-people' && ev.target.value.trim()) addPerson();
   });
   body.addEventListener('click', (ev) => {
+    if (ev.target.closest('[data-copyplace]')) {
+      const v = ($('#e-place', body)?.value || f.place || '').trim();
+      return copyText(v, '장소를 복사했습니다.');
+    }
     const rp = ev.target.closest('[data-rmp]');
     if (rp) {
       f.people.splice(+rp.dataset.rmp, 1);

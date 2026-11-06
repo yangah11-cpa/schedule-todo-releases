@@ -272,3 +272,6 @@ textarea.inp { height: auto; min-height: 84px; padding: 10px 12px; resize: verti
 .mini-btn:disabled { color: var(--faint); border-color: var(--line); }
 #viewCal > .team { flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin: 8px 8px 8px; }
 #viewCal > .team .team-h { position: sticky; top: -10px; z-index: 1; background: var(--panel); padding-top: 2px; }
+.inrow { display: flex; gap: 8px; align-items: stretch; }
+.inrow .inp { flex: 1; min-width: 0; }
+.mini-btn.copy { height: auto; min-width: 60px; font-size: 14px; border-radius: 12px; }
