@@ -20,6 +20,8 @@ const DEFAULT_SETTINGS = {
   calendarVisibility: {},
   defaultCalendar: null,
   pendingDeletes: [],
+  pendingTaskDeletes: [],
+  tasksSync: true,
   lastAlarmCheck: null,
 };
 
@@ -79,6 +81,7 @@ let saveTimer = null;
 function save() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => window.api.save(S.data), 250);
+  scheduleTaskSync();
 }
 
 function toast(msg) {
@@ -753,6 +756,7 @@ async function refreshGoogle() {
       );
       S.gEvents = res.flat();
       learnFromGoogle();
+      syncTasks();
       S.gRange = { from, to };
       S.lastSync = Date.now();
       S.syncError = errors.length ? errors.join(' / ') : null;
@@ -773,6 +777,248 @@ function maybeRefresh() {
   if (!S.g.connected) return;
   const { from, to } = viewRange();
   if (!S.gRange || from < S.gRange.from || to > S.gRange.to) refreshGoogle();
+}
+
+/* ───────────── 할 일 ↔ Google Tasks 동기화 ─────────────
+ * 기본 목록("내 할 일")과 양방향 동기화. 제목·메모·기한 날짜·완료·하위 할 일만 주고받고,
+ * 시간·반복 규칙·알림은 이 PC에만 보관한다. 반복 할 일은 완료 시 이 프로그램이 다음 회차를 만들어 올린다.
+ * 마지막 동기화 시점의 내용(sig)과 비교해 바뀐 쪽을 반영(양쪽 다 바뀌면 PC 쪽 우선).
+ */
+const TASK_LIST = '@default';
+const tasksOn = () => S.g.connected && S.g.tasks && settings().tasksSync !== false;
+
+function localView(t) {
+  return {
+    title: (t.title || '').trim(),
+    memo: (t.memo || '').trim(),
+    due: t.due || null,
+    done: !!t.done,
+    subs: (t.subtasks || []).map((x) => `${x.done ? 1 : 0}${(x.title || '').trim()}`).sort(),
+  };
+}
+function remoteView(r, kids) {
+  return {
+    title: (r.title || '').trim(),
+    memo: (r.notes || '').trim(),
+    due: r.due ? r.due.slice(0, 10) : null,
+    done: r.status === 'completed',
+    subs: kids.map((c) => `${c.status === 'completed' ? 1 : 0}${(c.title || '').trim()}`).sort(),
+  };
+}
+const sigOf = (v) => JSON.stringify(v);
+const taskBody = (t) => ({
+  title: t.title,
+  notes: t.memo || '',
+  due: t.due ? `${t.due}T00:00:00.000Z` : null,
+  status: t.done ? 'completed' : 'needsAction',
+  ...(t.done ? {} : { completed: null }),
+});
+const subBody = (x) => ({ title: x.title, status: x.done ? 'completed' : 'needsAction', ...(x.done ? {} : { completed: null }) });
+
+/** PC에서 지워지는 할 일의 Google 쪽 항목도 지우도록 기록 */
+function forgetTask(t) {
+  if (!t || !t.gtask?.id) return;
+  settings().pendingTaskDeletes.push(t.gtask.id);
+  t.gtask = null;
+}
+
+function needTaskSync() {
+  if (!tasksOn()) return false;
+  if (settings().pendingTaskDeletes.length) return true;
+  return S.data.todos.some((t) => (t.gtask ? t.deleted || sigOf(localView(t)) !== t.gtask.sig : !t.deleted && !t.done));
+}
+let taskSyncTimer = null;
+function scheduleTaskSync() {
+  clearTimeout(taskSyncTimer);
+  taskSyncTimer = setTimeout(() => {
+    if (needTaskSync()) syncTasks();
+  }, 3000);
+}
+
+const isGone = (e) => e && (e.status === 404 || e.status === 410);
+
+async function insertTaskFor(t) {
+  const r = await gcall('taskInsert', TASK_LIST, taskBody(t));
+  t.gtask = { id: r.id, sig: null };
+  let prev = null;
+  for (const x of t.subtasks || []) {
+    const c = await gcall('taskInsert', TASK_LIST, subBody(x), r.id, prev);
+    x.gid = c.id;
+    prev = c.id;
+  }
+  t.gtask.sig = sigOf(localView(t));
+}
+
+async function pushTask(t, kids) {
+  await gcall('taskPatch', TASK_LIST, t.gtask.id, taskBody(t));
+  const byId = new Map(kids.map((c) => [c.id, c]));
+  const keep = new Set();
+  let prev = null;
+  for (const x of t.subtasks || []) {
+    const c = x.gid && byId.get(x.gid);
+    if (c) {
+      keep.add(c.id);
+      if ((c.title || '') !== x.title || (c.status === 'completed') !== !!x.done) await gcall('taskPatch', TASK_LIST, c.id, subBody(x));
+      prev = c.id;
+    } else {
+      const n = await gcall('taskInsert', TASK_LIST, subBody(x), t.gtask.id, prev);
+      x.gid = n.id;
+      prev = n.id;
+    }
+  }
+  for (const c of kids) {
+    if (!keep.has(c.id)) {
+      try {
+        await gcall('taskDelete', TASK_LIST, c.id);
+      } catch (e) {
+        if (!isGone(e)) throw e;
+      }
+    }
+  }
+  t.gtask.sig = sigOf(localView(t));
+}
+
+function pullTask(t, r, kids) {
+  const v = remoteView(r, kids);
+  t.title = v.title || t.title;
+  t.memo = r.notes || '';
+  if (v.due !== (t.due || null)) {
+    t.due = v.due;
+    if (!t.due) t.time = null;
+  }
+  const local = new Map((t.subtasks || []).filter((x) => x.gid).map((x) => [x.gid, x]));
+  t.subtasks = kids.map((c) => {
+    const x = local.get(c.id) || { id: uid() };
+    return { ...x, title: c.title || '', done: c.status === 'completed', gid: c.id };
+  });
+  if (v.done !== !!t.done) {
+    // 휴대폰에서 완료/완료 취소 → 반복 할 일이면 다음 회차 생성 등 PC 규칙 적용
+    t.done = v.done;
+    t.doneAt = v.done ? Date.now() : null;
+    if (v.done && t.repeat && t.repeat.type !== 'none' && !t.nextId && (t.genMode !== 'fixed' || t.repeat.type === 'afterN')) {
+      const nx = t.repeat.type === 'afterN' ? D.addDays(D.today(), Math.max(1, t.repeat.interval || 1)) : nextOccurrence(t.repeat, t.due || D.today(), t.anchor || t.due);
+      if (nx) {
+        const n = makeInstance(t, nx);
+        S.data.todos.push(n);
+        t.nextId = n.id;
+      }
+    }
+  }
+  t.gtask.sig = sigOf(localView(t));
+}
+
+let taskSyncing = null;
+let taskSyncAgain = false;
+async function syncTasks() {
+  if (!tasksOn()) return;
+  if (taskSyncing) {
+    taskSyncAgain = true;
+    return taskSyncing;
+  }
+  taskSyncing = (async () => {
+    try {
+      await doTaskSync();
+      S.taskError = null;
+    } catch (e) {
+      S.taskError = e.message;
+      if (e.status === 403) S.taskError = 'Google Tasks 권한이 없거나 Tasks API가 꺼져 있습니다. 설정에서 확인하세요.';
+    } finally {
+      taskSyncing = null;
+      window.api.save(S.data);
+      renderAll();
+      if (taskSyncAgain) {
+        taskSyncAgain = false;
+        setTimeout(syncTasks, 500);
+      }
+    }
+  })();
+  return taskSyncing;
+}
+
+async function doTaskSync() {
+  const st = settings();
+  for (const id of st.pendingTaskDeletes.splice(0)) {
+    try {
+      await gcall('taskDelete', TASK_LIST, id);
+    } catch (e) {
+      if (!isGone(e)) st.pendingTaskDeletes.push(id);
+    }
+  }
+  const all = await gcall('taskList', TASK_LIST);
+  const byId = new Map(all.map((x) => [x.id, x]));
+  const kidsOf = new Map();
+  for (const x of all) {
+    if (!x.parent || x.deleted) continue;
+    if (!kidsOf.has(x.parent)) kidsOf.set(x.parent, []);
+    kidsOf.get(x.parent).push(x);
+  }
+  for (const k of kidsOf.values()) k.sort((a, b) => String(a.position).localeCompare(String(b.position)));
+  const mapped = new Set();
+
+  for (const t of S.data.todos.slice()) {
+    if (!t.gtask?.id) continue;
+    mapped.add(t.gtask.id);
+    const r = byId.get(t.gtask.id);
+    if (t.deleted) {
+      if (r && !r.deleted) {
+        try {
+          await gcall('taskDelete', TASK_LIST, t.gtask.id);
+        } catch (e) {
+          if (!isGone(e)) throw e;
+        }
+      }
+      t.gtask = null;
+      continue;
+    }
+    const lv = sigOf(localView(t));
+    if (!r || r.deleted) {
+      if (lv === t.gtask.sig) {
+        // 휴대폰에서 지움 → PC에서도 지움
+        S.data.todos = S.data.todos.filter((o) => o !== t);
+      } else {
+        t.gtask = null; // PC에서 고친 내용이 있으면 다시 올림
+      }
+      continue;
+    }
+    const kids = kidsOf.get(r.id) || [];
+    kids.forEach((c) => mapped.add(c.id));
+    const rv = sigOf(remoteView(r, kids));
+    if (lv !== t.gtask.sig) await pushTask(t, kids);
+    else if (rv !== t.gtask.sig) {
+      pullTask(t, r, kids);
+      if ((t.subtasks || []).some((x) => !x.gid)) await pushTask(t, kids);
+    }
+  }
+
+  // 휴대폰에서 새로 만든 할 일 가져오기 (완료된 옛 항목은 제외)
+  for (const r of all) {
+    if (r.parent || r.deleted || r.status === 'completed' || mapped.has(r.id) || !(r.title || '').trim()) continue;
+    const kids = kidsOf.get(r.id) || [];
+    const t = {
+      id: uid(),
+      title: r.title.trim(),
+      due: r.due ? r.due.slice(0, 10) : null,
+      time: null,
+      repeat: { type: 'none' },
+      genMode: 'onComplete',
+      showOnCalendar: true,
+      alarm: null,
+      memo: r.notes || '',
+      subtasks: kids.map((c) => ({ id: uid(), title: c.title || '', done: c.status === 'completed', gid: c.id })),
+      createdAt: Date.now(),
+      done: false,
+      gtask: { id: r.id, sig: null },
+    };
+    t.gtask.sig = sigOf(localView(t));
+    S.data.todos.push(t);
+  }
+
+  // PC의 새 할 일 올리기 (미완료만)
+  for (const t of S.data.todos.slice()) {
+    if (t.gtask || t.deleted || t.done) continue;
+    await insertTaskFor(t);
+  }
+  S.taskSyncedAt = Date.now();
 }
 
 /* ───────────── 일정 창 ───────────── */
@@ -1395,7 +1641,10 @@ function toggleTodo(id, checked) {
   } else if (!checked && t.nextId) {
     const i = S.data.todos.findIndex((x) => x.id === t.nextId);
     const n = S.data.todos[i];
-    if (n && !n.done && !n.touched && !(n.subtasks || []).some((s) => s.done)) S.data.todos.splice(i, 1);
+    if (n && !n.done && !n.touched && !(n.subtasks || []).some((s) => s.done)) {
+      forgetTask(n);
+      S.data.todos.splice(i, 1);
+    }
     t.nextId = null;
   }
   if (rep && t.genMode === 'fixed') ensureFixed();
@@ -1718,7 +1967,11 @@ async function deleteTodo(t) {
     t.deleted = true;
   } else t.deleted = true;
   // 반복이 아닌 삭제 항목은 실제로 제거 (고정 생성 반복만 날짜 기록용으로 남김)
-  S.data.todos = S.data.todos.filter((o) => !(o.deleted && !(o.seriesId && o.genMode === 'fixed' && !o.seriesEnded)));
+  S.data.todos = S.data.todos.filter((o) => {
+    const purge = o.deleted && !(o.seriesId && o.genMode === 'fixed' && !o.seriesEnded);
+    if (purge) forgetTask(o);
+    return !purge;
+  });
   save();
   renderAll();
   return true;
@@ -1745,7 +1998,18 @@ async function openSettings() {
         <h2>Google 캘린더 연결</h2>
         ${
           g.connected
-            ? `<div class="row gap8 wrap"><span class="small">연결된 계정: <b>${h(g.account || '알 수 없음')}</b></span><div class="spacer"></div><button type="button" class="btn danger" data-gdisconnect>연결 해제</button></div>`
+            ? `<div class="row gap8 wrap"><span class="small">연결된 계정: <b>${h(g.account || '알 수 없음')}</b></span><div class="spacer"></div><button type="button" class="btn danger" data-gdisconnect>연결 해제</button></div>
+              <div class="sect" style="border-top:0;padding-top:4px">
+                <h2 style="font-size:14px">할 일 ↔ Google Tasks (휴대폰 연동)</h2>
+                ${
+                  g.tasks
+                    ? `<label class="checkline small"><input type="checkbox" id="s-tasks" ${st.tasksSync !== false ? 'checked' : ''}>할 일을 Google Tasks "내 할 일" 목록과 동기화</label>
+                       <span class="note">휴대폰의 Google Tasks 앱이나 구글 캘린더 앱에서 보고, 추가하고, 완료할 수 있습니다. 제목·메모·기한 날짜·완료·하위 할 일이 동기화되고, 시간·반복 규칙·알림은 이 PC에만 보관됩니다.</span>
+                       <span class="small ${S.taskError ? 'err' : 'muted'}" id="s-taskmsg">${S.taskError ? h(S.taskError) : S.taskSyncedAt ? `마지막 동기화: ${new Date(S.taskSyncedAt).toLocaleTimeString('ko-KR')}` : ''}</span>`
+                    : `<span class="note">할 일을 휴대폰과 연동하려면 Google Cloud 콘솔에서 <button type="button" class="linkbtn" data-ext="https://console.cloud.google.com/apis/library/tasks.googleapis.com">Tasks API</button>를 "사용"으로 켠 뒤, 아래 버튼으로 다시 연결해 할 일 권한을 승인하세요.</span>
+                       <div class="row gap8"><button type="button" class="btn primary" data-greconnect>할 일 권한 추가 (다시 연결)</button><span class="small muted" id="s-gmsg2"></span></div>`
+                }
+              </div>`
             : `<ol class="steps">
                 <li><button type="button" class="linkbtn" data-ext="https://console.cloud.google.com/projectcreate">Google Cloud 콘솔</button>에서 프로젝트를 하나 만듭니다.</li>
                 <li><button type="button" class="linkbtn" data-ext="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com">Google Calendar API</button>를 "사용"으로 설정합니다.</li>
@@ -1799,6 +2063,12 @@ async function openSettings() {
 
   body.addEventListener('change', async (e) => {
     const t = e.target;
+    if (t.id === 's-tasks') {
+      st.tasksSync = t.checked;
+      save();
+      if (t.checked) syncTasks();
+      return;
+    }
     if (t.id === 's-autostart' || t.id === 's-tray') {
       prefs = await window.api.prefs.set(t.id === 's-autostart' ? { autoStart: t.checked } : { closeToTray: t.checked });
       return;
@@ -1848,6 +2118,23 @@ async function openSettings() {
       await refreshGoogle();
       draw();
       toast('Google 캘린더가 연결되었습니다.');
+    }
+    if (e.target.closest('[data-greconnect]')) {
+      const msg = $('#s-gmsg2', body);
+      msg.textContent = '브라우저에서 Google 로그인을 완료하세요…';
+      const r = await window.api.google.connect();
+      if (!r.ok) {
+        msg.textContent = `연결 실패: ${r.error}`;
+        return;
+      }
+      S.g = r.data;
+      draw();
+      if (S.g.tasks) {
+        toast('할 일 권한이 추가되었습니다. 할 일을 Google Tasks와 동기화합니다.');
+        await syncTasks();
+        draw();
+      } else toast('할 일 권한이 승인되지 않았습니다. 로그인 화면에서 할 일 항목도 허용해 주세요.');
+      return;
     }
     if (e.target.closest('[data-gdisconnect]')) {
       const ok = await choose('연결 해제', 'Google 캘린더 연결을 해제할까요?\n이미 Google에 등록된 일정은 그대로 남습니다.', [

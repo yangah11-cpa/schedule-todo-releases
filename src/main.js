@@ -236,6 +236,10 @@ app.whenReady().then(() => {
   ipcMain.handle('g:insert', wrap((cal, ev) => google.insertEvent(cal, ev)));
   ipcMain.handle('g:patch', wrap((cal, id, ev) => google.patchEvent(cal, id, ev)));
   ipcMain.handle('g:delete', wrap((cal, id) => google.deleteEvent(cal, id)));
+  ipcMain.handle('t:list', wrap((list) => google.listTasks(list)));
+  ipcMain.handle('t:insert', wrap((list, task, parent, prev) => google.insertTask(list, task, parent, prev)));
+  ipcMain.handle('t:patch', wrap((list, id, task) => google.patchTask(list, id, task)));
+  ipcMain.handle('t:delete', wrap((list, id) => google.deleteTask(list, id)));
 
   createWindow();
   setupAutoUpdate();

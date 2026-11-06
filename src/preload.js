@@ -33,5 +33,9 @@ contextBridge.exposeInMainWorld('api', {
     insert: call('g:insert'),
     patch: call('g:patch'),
     remove: call('g:delete'),
+    taskList: call('t:list'),
+    taskInsert: call('t:insert'),
+    taskPatch: call('t:patch'),
+    taskDelete: call('t:delete'),
   },
 });
