@@ -261,7 +261,7 @@ textarea.inp { height: auto; min-height: 84px; padding: 10px 12px; resize: verti
 #viewCal .hweek .hd .dn { width: 26px; height: 26px; font-size: 15px; }
 #viewCal .hweek .hcol { min-height: 0; }
 #viewCal > .wdetail { flex: 0 0 24%; min-height: 0; display: flex; flex-direction: column; margin: 8px 8px 0; }
-.wdh { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 8px 8px 6px 12px; border-bottom: 1px solid #EEECE7; }
+.wdh { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 10px 12px 8px; border-bottom: 1px solid #EEECE7; }
 .wdh b { font-size: 14px; }
 .wdh .sp { flex: 1; }
 .wdl { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }

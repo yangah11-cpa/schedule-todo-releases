@@ -501,9 +501,7 @@ function renderCal() {
   html += '</div></div>';
   // 선택한 주의 일정 목록(자세히): 장소·참여 인원 — 높이 고정, 안에서 스크롤
   const detail = segs.filter((g) => g.kind === 'ev' && (g.e.place || g.e.people?.length)).sort((x, y) => x.i - y.i);
-  S.weekPlaces = [...new Set(detail.map((g) => (g.e.place || '').trim()).filter(Boolean))];
-  html += `<div class="wdetail"><div class="wdh"><b>일정 상세</b><span class="xs muted">${detail.length ? `${detail.length}건` : ''}</span><div class="sp"></div>
-      <button type="button" class="mini-btn" data-copyplaces ${S.weekPlaces.length ? '' : 'disabled'}>장소 복사${S.weekPlaces.length ? ` (${S.weekPlaces.length})` : ''}</button></div>
+  html += `<div class="wdetail"><div class="wdh"><b>일정 상세</b><span class="xs muted">${detail.length ? `${detail.length}건` : ''}</span></div>
     <div class="wdl">`;
   if (!detail.length) html += '<div class="empty small">이 주에는 장소·참여 인원이 적힌 일정이 없습니다.</div>';
   else {
@@ -1325,7 +1323,6 @@ function bind() {
         .then(render)
         .catch((er) => toast(er.message));
     }
-    if (e.target.closest('[data-copyplaces]')) return copyText((S.weekPlaces || []).join('\n'), `장소 ${S.weekPlaces?.length || 0}곳을 복사했습니다.`);
     const day = e.target.closest('[data-day]');
     if (day) {
       S.sel = day.dataset.day;
