@@ -101,7 +101,7 @@ button:disabled { cursor: default; opacity: .5; }
 
 .chip { display: block; font-size: 12px; line-height: 18px; padding: 1px 6px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border: 0; text-align: left; width: 100%; cursor: pointer; }
 .legend .chip { display: inline-block; width: auto; cursor: default; }
-.chip.g { background: var(--accent-bg); color: var(--accent-d); }
+.chip.g { background: #E3EBFA; color: #22488F; }
 .chip.c { background: var(--local-bg); color: var(--local-ink); }
 .chip.l { background: var(--lunar-bg); color: var(--lunar-d); }
 .chip.h { background: var(--soft); color: var(--ink2); }
@@ -134,11 +134,12 @@ button:disabled { cursor: default; opacity: .5; }
 .wk .chip, .week2 > .chip { align-self: center; width: auto; min-width: 0; margin: 0 4px; position: relative; }
 .wk .more { align-self: center; border: 0; background: none; text-align: left; font-size: 12px; color: var(--muted); padding: 0 8px; white-space: nowrap; }
 .wk .more:hover { color: var(--ink); }
-.chip.bar { color: #fff; font-weight: 500; }
-.chip.bar.g { background: var(--accent); }
-.chip.bar.c { background: #2F7A6B; }
-.chip.bar.l { background: var(--lunar); }
-.chip.bar.t { background: var(--ink2); }
+/* 여러 날 일정 막대: 파스텔톤 */
+.chip.bar { font-weight: 500; }
+.chip.bar.g { background: #C3D4F4; color: #183C86; }
+.chip.bar.c { background: #C4E2DA; color: #1C5248; }
+.chip.bar.l { background: #F3D6BF; color: #6E330D; }
+.chip.bar.t { background: #DEDCD6; color: #3A3935; }
 .chip.bar:hover { filter: brightness(.94); }
 .chip.cprev { margin-left: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
 .chip.cnext { margin-right: 0; border-top-right-radius: 0; border-bottom-right-radius: 0; }
