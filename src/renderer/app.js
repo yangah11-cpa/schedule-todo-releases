@@ -716,6 +716,7 @@ async function refreshGoogle() {
         )
       );
       S.gEvents = res.flat();
+      learnFromGoogle();
       S.gRange = { from, to };
       S.lastSync = Date.now();
       S.syncError = errors.length ? errors.join(' / ') : null;
@@ -751,6 +752,68 @@ function defaultCalendarId() {
   return ws.find((c) => c.primary)?.id || 'local';
 }
 
+/* ───────────── 장소·참여 인원 자동 채우기 (이전 일정 참고) ───────────── */
+const normTitle = (t) => String(t || '').replace(/\s+/g, ' ').trim();
+// 회사 이름 = 제목의 첫 단어 ((주)·㈜·주식회사 표기는 무시)
+const stripCorp = (t) => normTitle(t).replace(/^(\(주\)|㈜|주식회사|\(유\)|유한회사)\s*/, '').replace(/\s*(\(주\)|㈜|주식회사)(?=\s|$)/, '');
+const firstToken = (t) => stripCorp(t).split(' ')[0] || '';
+
+/** 이전 일정의 장소·참여 인원을 제목별로 기록 (최근 400개) */
+function remember(title, place, people, at = Date.now()) {
+  const key = normTitle(title);
+  if (!key || (!place && !(people && people.length))) return;
+  const hist = (S.data.history ||= {});
+  const prev = hist[key];
+  if (prev && prev.at > at) return;
+  hist[key] = { place: place || '', people: [...(people || [])], at };
+  const keys = Object.keys(hist);
+  if (keys.length > 400) {
+    keys.sort((a, b) => hist[a].at - hist[b].at).slice(0, keys.length - 400).forEach((k) => delete hist[k]);
+  }
+}
+
+function learnFromGoogle() {
+  let changed = false;
+  for (const g of S.gEvents) {
+    if (g.holidayCal || (!g.place && !(g.people && g.people.length))) continue;
+    const at = new Date(`${g.date}T12:00:00`).getTime();
+    const before = JSON.stringify(S.data.history?.[normTitle(g.title)]);
+    remember(g.title, g.place, g.people, at);
+    if (before !== JSON.stringify(S.data.history?.[normTitle(g.title)])) changed = true;
+  }
+  if (changed) save();
+}
+
+/** 제목으로 가장 비슷한 이전 일정 찾기: ① 같은 제목 ② 첫 단어(회사명 등)가 같은 일정 중 가장 최근 */
+function findSimilar(title) {
+  const key = normTitle(title);
+  if (key.length < 2) return null;
+  const hist = S.data.history || {};
+  if (hist[key]) return { title: key, ...hist[key] };
+  const tok = firstToken(key);
+  const flat = stripCorp(key).replace(/\s/g, '');
+  let best = null;
+  for (const [t, v] of Object.entries(hist)) {
+    const c = firstToken(t);
+    // 같은 회사: 첫 단어가 같거나, 띄어쓰기 없이 회사 이름으로 시작하는 제목
+    const same = c.length >= 2 && (c === tok || flat.startsWith(c) || (tok.length >= 2 && stripCorp(t).replace(/\s/g, '').startsWith(tok)));
+    if (!same) continue;
+    if (!best || v.at > best.at) best = { title: t, ...v };
+  }
+  return best;
+}
+
+function knownPlaces() {
+  const set = new Map();
+  for (const v of Object.values(S.data.history || {})) if (v.place) set.set(v.place, Math.max(set.get(v.place) || 0, v.at));
+  return [...set.entries()].sort((a, b) => b[1] - a[1]).map((x) => x[0]).slice(0, 50);
+}
+function knownPeople() {
+  const set = new Map();
+  for (const v of Object.values(S.data.history || {})) for (const p of v.people || []) set.set(p, Math.max(set.get(p) || 0, v.at));
+  return [...set.entries()].sort((a, b) => b[1] - a[1]).map((x) => x[0]).slice(0, 100);
+}
+
 function openEventDialog({ ev = null, g = null, date = null, occ = null } = {}) {
   const today = D.today();
   const base = date || today;
@@ -776,6 +839,8 @@ function openEventDialog({ ev = null, g = null, date = null, occ = null } = {}) 
     people: [...(src?.people || [])],
     memo: src?.memo || '',
   };
+  // 새 일정일 때만 자동 채우기. 사용자가 직접 고친 칸은 건드리지 않음
+  const auto = { on: !src, placeTouched: false, peopleTouched: false, from: null, filledPlace: false, filledPeople: false };
   const readonly = ext && !g.writable;
   const recurringExt = ext && !!g.recurringEventId;
 
@@ -877,11 +942,18 @@ function openEventDialog({ ev = null, g = null, date = null, occ = null } = {}) 
       }
       ${ev && ev.repeat !== 'none' ? '<div class="note">반복 일정을 수정하면 반복 전체에 적용됩니다.</div>' : ''}
       ${ev?.syncError ? `<div class="warn">Google 동기화 대기 중: ${h(ev.syncError)}</div>` : ''}
-      <div class="fld"><label class="lbl" for="e-place">장소</label><input class="inp" id="e-place" value="${h(f.place)}" placeholder="장소 또는 주소" ${readonly ? 'disabled' : ''}></div>
+      ${
+        auto.from
+          ? `<div class="note" id="e-autonote">이전 일정 "${h(auto.from)}"을(를) 참고해 ${[auto.filledPlace && '장소', auto.filledPeople && '참여 인원'].filter(Boolean).join('·')}을(를) 채웠습니다. <button type="button" class="linkbtn" data-autoclear>지우기</button></div>`
+          : ''
+      }
+      <div class="fld"><label class="lbl" for="e-place">장소</label><input class="inp" id="e-place" list="dl-places" value="${h(f.place)}" placeholder="장소 또는 주소" ${readonly ? 'disabled' : ''}>
+        <datalist id="dl-places">${knownPlaces().map((p) => `<option value="${h(p)}"></option>`).join('')}</datalist></div>
       <div class="fld"><label class="lbl" for="e-people">참여 인원</label>
         <div class="chipsbox" id="e-chips">${f.people
           .map((p, i) => `<span class="person">${h(p)}${readonly ? '' : `<button type="button" data-rmp="${i}" aria-label="${h(p)} 삭제">×</button>`}</span>`)
-          .join('')}${readonly ? '' : '<input id="e-people" placeholder="이름 입력 후 Enter">'}</div>
+          .join('')}${readonly ? '' : '<input id="e-people" list="dl-people" placeholder="이름 입력 후 Enter">'}</div>
+        <datalist id="dl-people">${knownPeople().filter((p) => !f.people.includes(p)).map((p) => `<option value="${h(p)}"></option>`).join('')}</datalist>
         ${f.calendarId !== 'local' ? '<span class="note">장소와 참여 인원은 Google 일정의 설명란에 함께 기록됩니다 (초대는 보내지 않음).</span>' : ''}
       </div>
       <div class="fld"><label class="lbl" for="e-memo">메모</label><textarea class="inp" id="e-memo" rows="3" ${readonly ? 'disabled' : ''}>${h(f.memo)}</textarea></div>
@@ -903,14 +975,67 @@ function openEventDialog({ ev = null, g = null, date = null, occ = null } = {}) 
     const names = inp.value.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
     if (!names.length) return;
     f.people.push(...names.filter((n) => !f.people.includes(n)));
+    auto.peopleTouched = true;
+    auto.filledPeople = false;
     draw();
     $('#e-people', form)?.focus();
   };
 
+  let autoTimer = null;
+  const applyAuto = () => {
+    if (!auto.on) return;
+    const m = findSimilar(f.title);
+    let changed = false;
+    // 이전에 자동으로 채운 값은, 더 이상 맞는 일정이 없거나 다른 일정과 맞으면 다시 계산
+    if (auto.filledPlace && !auto.placeTouched) {
+      f.place = '';
+      auto.filledPlace = false;
+      changed = true;
+    }
+    if (auto.filledPeople && !auto.peopleTouched) {
+      f.people = [];
+      auto.filledPeople = false;
+      changed = true;
+    }
+    auto.from = null;
+    if (m) {
+      if (!auto.placeTouched && !f.place && m.place) {
+        f.place = m.place;
+        auto.filledPlace = true;
+      }
+      if (!auto.peopleTouched && !f.people.length && m.people?.length) {
+        f.people = [...m.people];
+        auto.filledPeople = true;
+      }
+      if (auto.filledPlace || auto.filledPeople) {
+        auto.from = m.title;
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    const t = $('#e-title', form);
+    const focused = document.activeElement === t;
+    const pos = t ? t.selectionStart : null;
+    draw();
+    if (focused) {
+      const nt = $('#e-title', form);
+      nt.focus();
+      if (pos !== null) nt.setSelectionRange(pos, pos);
+    }
+  };
+
   form.addEventListener('input', (e) => {
     const id = e.target.id;
-    if (id === 'e-title') f.title = e.target.value;
-    else if (id === 'e-place') f.place = e.target.value;
+    if (id === 'e-title') {
+      f.title = e.target.value;
+      clearTimeout(autoTimer);
+      autoTimer = setTimeout(applyAuto, 350);
+    } else if (id === 'e-place') {
+      f.place = e.target.value;
+      auto.placeTouched = true;
+      auto.filledPlace = false;
+    }
+    else if (id === 'e-people' && e.inputType === 'insertReplacementText') addPerson();
     else if (id === 'e-memo') f.memo = e.target.value;
     else if (id === 'e-st') f.startTime = e.target.value;
     else if (id === 'e-et') f.endTime = e.target.value;
@@ -964,6 +1089,8 @@ function openEventDialog({ ev = null, g = null, date = null, occ = null } = {}) 
         addPerson();
       } else if (e.key === 'Backspace' && !e.target.value && f.people.length) {
         f.people.pop();
+        auto.peopleTouched = true;
+        auto.filledPeople = false;
         draw();
         $('#e-people', form)?.focus();
       }
@@ -978,6 +1105,16 @@ function openEventDialog({ ev = null, g = null, date = null, occ = null } = {}) 
     const b = e.target.closest('[data-rmp]');
     if (b) {
       f.people.splice(+b.dataset.rmp, 1);
+      auto.peopleTouched = true;
+      auto.filledPeople = false;
+      draw();
+      return;
+    }
+    if (e.target.closest('[data-autoclear]')) {
+      if (auto.filledPlace) f.place = '';
+      if (auto.filledPeople) f.people = [];
+      auto.on = false;
+      auto.from = null;
       draw();
     }
   });
@@ -1046,6 +1183,7 @@ function saveLocalEvent(existing, f) {
   ev.sync = ev.calendarId === 'local' ? 'ok' : 'pending';
   settings().defaultCalendar = f.calendarId;
 
+  remember(ev.title, ev.place, ev.people);
   const i = S.data.events.findIndex((x) => x.id === ev.id);
   if (i >= 0) S.data.events[i] = ev;
   else S.data.events.push(ev);
@@ -1096,6 +1234,7 @@ async function deleteLocalEvent(ev, occ) {
 
 async function saveExternal(g, f) {
   if (!f.title.trim()) return '제목을 입력하세요.';
+  remember(f.title, f.place.trim(), f.people);
   const payload = { summary: f.title.trim(), description: composeDescription(f.memo, f.place.trim(), f.people) };
   let target = g.gid;
   if (g.recurringEventId) target = g.recurringEventId;
@@ -1893,6 +2032,11 @@ async function init() {
   const d = await window.api.load();
   d.events ||= [];
   d.todos ||= [];
+  if (!d.history) {
+    d.history = {};
+    S.data = d;
+    for (const ev of d.events) remember(ev.title, ev.place, ev.people, ev.updatedAt || ev.createdAt || 0);
+  }
   d.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}) };
   for (const t of d.todos) t.subtasks ||= [];
   S.data = d;

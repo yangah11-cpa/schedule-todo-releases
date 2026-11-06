@@ -122,7 +122,7 @@ export function fromGoogle(item, cal) {
   const priv = item.extendedProperties?.private || {};
   const desc = parseDescription(item.description);
   return {
-    place: desc.place,
+    place: desc.place || (item.location || ''), // 설명란 기록이 없으면 Google 위치 필드 참고(읽기만)
     people: desc.people,
     source: 'google',
     key: `${cal.id}|${item.id}`,

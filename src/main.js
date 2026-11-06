@@ -166,6 +166,11 @@ function appInfo() {
 let patchReady = null;
 function watchPatch() {
   const info = appInfo();
+  ipcMain.handle('patch:state', () => patchReady);
+  ipcMain.handle('patch:apply', () => {
+    app.relaunch();
+    app.exit(0);
+  });
   if (!info.patchDir) return;
   const newer = global.__patchNewer || ((a, b) => a !== b);
   const pkg = path.join(info.patchDir, 'package.json');
@@ -180,11 +185,6 @@ function watchPatch() {
       /* 패치 없음 */
     }
   };
-  ipcMain.handle('patch:state', () => patchReady);
-  ipcMain.handle('patch:apply', () => {
-    app.relaunch();
-    app.exit(0);
-  });
   setInterval(check, 5000);
   check();
 }
