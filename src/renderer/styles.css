@@ -292,3 +292,7 @@ button.tchip.cont.more { width: calc(100% + 8px); }
 button.tchip:hover { filter: brightness(0.96); box-shadow: inset 0 0 0 1px rgba(36, 89, 201, 0.35); }
 button.tchip small { display: block; font-size: 11px; opacity: 0.85; font-weight: 500; }
 button.tchip .ed { font-style: normal; font-size: 11px; opacity: 0.75; margin-left: 4px; }
+
+/* 종료 시간 자동 입력 표시 */
+@keyframes autofill-flash { 0% { background: #DCE7FB; box-shadow: 0 0 0 2px #7FA2E8; } 100% { background: inherit; box-shadow: none; } }
+#e-et.autofilled { animation: autofill-flash 1.6s ease-out; }

@@ -275,3 +275,11 @@ textarea.inp { height: auto; min-height: 84px; padding: 10px 12px; resize: verti
 .inrow { display: flex; gap: 8px; align-items: stretch; }
 .inrow .inp { flex: 1; min-width: 0; }
 .mini-btn.copy { height: auto; min-width: 60px; font-size: 14px; border-radius: 12px; }
+
+/* 종료 시간 자동 입력 표시 */
+@keyframes autofill-flash { 0% { background: #DCE7FB; box-shadow: 0 0 0 2px #7FA2E8; } 100% { background: inherit; box-shadow: none; } }
+#e-et.autofilled { animation: autofill-flash 1.6s ease-out; }
+
+/* 주간 일정·상세 목록: 길어도 한 줄로 (넘치면 …) */
+.hev, .hev.bar { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; word-break: normal; -webkit-line-clamp: unset; }
+.wd .wdt, .wd .wdm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }

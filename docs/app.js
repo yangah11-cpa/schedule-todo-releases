@@ -52,6 +52,20 @@ async function copyText(text, done) {
   toast(done);
 }
 
+/** 시작 시간을 고르면 종료 시간을 1시간 뒤로 자동 입력하고, 바뀐 칸을 잠깐 강조해 확인할 수 있게 한다 */
+function autoEndTime(f, root, start) {
+  if (!/^\d{1,2}:\d{2}/.test(start || '')) return;
+  const [hh, mm] = start.split(':').map(Number);
+  const m = Math.min(hh * 60 + mm + 60, 23 * 60 + 59);
+  f.endTime = `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+  const et = root.querySelector('#e-et');
+  if (!et) return;
+  et.value = f.endTime;
+  et.classList.remove('autofilled');
+  void et.offsetWidth;
+  et.classList.add('autofilled');
+}
+
 function toast(msg) {
   const t = $('#toast');
   t.textContent = msg;
@@ -483,6 +497,8 @@ function renderCal() {
     for (let c = g.i; c < g.i + g.n; c++) lanes[L][c] = true;
     g.lane = L;
   }
+  // 일정 줄은 내용 높이만큼, 남는 세로 공간은 맨 아래 빈 줄이 차지 (일정 사이 간격이 벌어지지 않게)
+  html = html.replace('id="weekWrap">', `id="weekWrap" style="grid-template-rows:auto repeat(${lanes.length}, auto) 1fr">`);
   // 요일별 배경 칸(빈 곳을 누르면 그날 새 일정)
   for (const [i, d] of days.entries()) {
     const w = D.dow(d);
@@ -868,7 +884,10 @@ function openEvent(e = null, date = S.sel) {
       auto.placeTouched = true;
       auto.filledPlace = false;
     } else if (id === 'e-memo') f.memo = ev.target.value;
-    else if (id === 'e-st') f.startTime = ev.target.value;
+    else if (id === 'e-st') {
+      f.startTime = ev.target.value;
+      autoEndTime(f, body, f.startTime);
+    }
     else if (id === 'e-et') f.endTime = ev.target.value;
   });
   body.addEventListener('change', (ev) => {

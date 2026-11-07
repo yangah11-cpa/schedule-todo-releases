@@ -1399,7 +1399,10 @@ function openEventDialog({ ev = null, g = null, date = null, occ = null } = {}) 
     }
     else if (id === 'e-people' && e.inputType === 'insertReplacementText') addPerson();
     else if (id === 'e-memo') f.memo = e.target.value;
-    else if (id === 'e-st') f.startTime = e.target.value;
+    else if (id === 'e-st') {
+      f.startTime = e.target.value;
+      autoEndTime(f, form, f.startTime);
+    }
     else if (id === 'e-et') f.endTime = e.target.value;
   });
   form.addEventListener('change', (e) => {
@@ -3203,3 +3206,17 @@ async function init() {
 }
 
 init();
+
+/** 시작 시간을 고르면 종료 시간을 1시간 뒤로 자동 입력하고, 바뀐 칸을 잠깐 강조해 확인할 수 있게 한다 */
+function autoEndTime(f, root, start) {
+  if (!/^\d{1,2}:\d{2}/.test(start || '')) return;
+  const [hh, mm] = start.split(':').map(Number);
+  const m = Math.min(hh * 60 + mm + 60, 23 * 60 + 59);
+  f.endTime = `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+  const et = root.querySelector('#e-et');
+  if (!et) return;
+  et.value = f.endTime;
+  et.classList.remove('autofilled');
+  void et.offsetWidth;
+  et.classList.add('autofilled');
+}
