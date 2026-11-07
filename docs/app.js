@@ -60,10 +60,53 @@ function autoEndTime(f, root, start) {
   f.endTime = `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
   const et = root.querySelector('#e-et');
   if (!et) return;
-  et.value = f.endTime;
+  if (et.tagName === 'BUTTON') et.textContent = f.endTime;
+  else et.value = f.endTime;
   et.classList.remove('autofilled');
   void et.offsetWidth;
   et.classList.add('autofilled');
+}
+
+/** 시·분을 위아래로 굴려 고르는 시간 선택기 (24시간) */
+function openTimeWheel(title, value, onOk) {
+  const ITEM = 48;
+  const [h0, m0] = (/^\d{1,2}:\d{2}/.test(value || '') ? value : '09:00').split(':').map(Number);
+  const col = (n, cls) =>
+    `<div class="wcol ${cls}"><div class="wpad"></div>${Array.from({ length: n }, (_, i) => `<div class="witem" data-v="${i}">${String(i).padStart(2, '0')}</div>`).join('')}<div class="wpad"></div></div>`;
+  const ov = document.createElement('div');
+  ov.className = 'wheel-ov';
+  ov.innerHTML = `<div class="wheel-box" role="dialog" aria-label="${title}">
+      <div class="wheel-t">${title}</div>
+      <div class="wheel">${col(24, 'wh')}<div class="wsep">:</div>${col(60, 'wm')}<div class="wband"></div></div>
+      <div class="wheel-f"><button type="button" class="btn" data-wx>취소</button><button type="button" class="btn primary" data-wok>확인</button></div>
+    </div>`;
+  document.body.appendChild(ov);
+  const ch = ov.querySelector('.wh');
+  const cm = ov.querySelector('.wm');
+  const pick = (c) => Math.max(0, Math.min(c.querySelectorAll('.witem').length - 1, Math.round(c.scrollTop / ITEM)));
+  const mark = (c) => {
+    const v = pick(c);
+    c.querySelectorAll('.witem').forEach((x, i) => x.classList.toggle('on', i === v));
+  };
+  ch.scrollTop = h0 * ITEM;
+  cm.scrollTop = m0 * ITEM;
+  mark(ch);
+  mark(cm);
+  for (const c of [ch, cm]) {
+    c.addEventListener('scroll', () => mark(c), { passive: true });
+    c.addEventListener('click', (e) => {
+      const it = e.target.closest('.witem');
+      if (it) c.scrollTo({ top: +it.dataset.v * ITEM, behavior: 'smooth' });
+    });
+  }
+  const close = () => ov.remove();
+  ov.addEventListener('click', (e) => {
+    if (e.target === ov || e.target.closest('[data-wx]')) return close();
+    if (e.target.closest('[data-wok]')) {
+      onOk(`${String(pick(ch)).padStart(2, '0')}:${String(pick(cm)).padStart(2, '0')}`);
+      close();
+    }
+  });
 }
 
 function toast(msg) {
@@ -817,8 +860,8 @@ function openEvent(e = null, date = S.sel) {
         f.allDay
           ? ''
           : `<div class="row2">
-              <div class="fld"><label class="lbl" for="e-st">시작</label><input type="time" class="inp" id="e-st" value="${f.startTime}" ${readonly || recurring ? 'disabled' : ''}></div>
-              <div class="fld"><label class="lbl" for="e-et">종료</label><input type="time" class="inp" id="e-et" value="${f.endTime}" ${readonly || recurring ? 'disabled' : ''}></div>
+              <div class="fld"><label class="lbl" for="e-st">시작</label><button type="button" class="inp timebtn" id="e-st" data-wheel="st" ${readonly || recurring ? 'disabled' : ''}>${f.startTime}</button></div>
+              <div class="fld"><label class="lbl" for="e-et">종료</label><button type="button" class="inp timebtn" id="e-et" data-wheel="et" ${readonly || recurring ? 'disabled' : ''}>${f.endTime}</button></div>
             </div>`
       }
       ${
@@ -925,6 +968,20 @@ function openEvent(e = null, date = S.sel) {
     if (ev.target.id === 'e-people' && ev.target.value.trim()) addPerson();
   });
   body.addEventListener('click', (ev) => {
+    const wb = ev.target.closest('[data-wheel]');
+    if (wb && !wb.disabled) {
+      const isStart = wb.dataset.wheel === 'st';
+      return openTimeWheel(isStart ? '시작 시간' : '종료 시간', isStart ? f.startTime : f.endTime, (v) => {
+        if (isStart) {
+          f.startTime = v;
+          wb.textContent = v;
+          autoEndTime(f, body, v);
+        } else {
+          f.endTime = v;
+          wb.textContent = v;
+        }
+      });
+    }
     if (ev.target.closest('[data-copyplace]')) {
       const v = ($('#e-place', body)?.value || f.place || '').trim();
       return copyText(v, '장소를 복사했습니다.');

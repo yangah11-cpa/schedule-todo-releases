@@ -283,3 +283,20 @@ textarea.inp { height: auto; min-height: 84px; padding: 10px 12px; resize: verti
 /* 주간 일정·상세 목록: 길어도 한 줄로 (넘치면 …) */
 .hev, .hev.bar { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; word-break: normal; -webkit-line-clamp: unset; }
 .wd .wdt, .wd .wdm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+/* 시간 선택: 시·분 굴리기 */
+.timebtn { text-align: left; font-variant-numeric: tabular-nums; font-size: 17px; font-weight: 600; color: var(--ink); }
+.timebtn:disabled { color: var(--faint); }
+.wheel-ov { position: fixed; inset: 0; z-index: 400; background: rgba(20, 20, 20, 0.35); display: flex; align-items: flex-end; justify-content: center; }
+.wheel-box { width: 100%; max-width: 520px; background: #F1F1F3; border-radius: 22px 22px 0 0; padding: 16px 16px calc(14px + env(safe-area-inset-bottom)); }
+.wheel-t { text-align: center; font-weight: 700; font-size: 15px; color: var(--ink2); margin-bottom: 6px; }
+.wheel { position: relative; display: flex; justify-content: center; align-items: center; gap: 28px; height: 240px; }
+.wcol { height: 240px; width: 96px; overflow-y: scroll; scroll-snap-type: y mandatory; scrollbar-width: none; -webkit-mask-image: linear-gradient(transparent, #000 30%, #000 70%, transparent); mask-image: linear-gradient(transparent, #000 30%, #000 70%, transparent); }
+.wcol::-webkit-scrollbar { display: none; }
+.wpad { height: 96px; }
+.witem { height: 48px; line-height: 48px; text-align: center; font-size: 30px; color: #B9B9BD; scroll-snap-align: center; font-variant-numeric: tabular-nums; transition: color 0.12s, font-weight 0.12s; }
+.witem.on { color: #111; font-weight: 700; font-size: 36px; }
+.wsep { font-size: 32px; font-weight: 700; color: #111; padding-bottom: 4px; }
+.wband { position: absolute; left: 12%; right: 12%; top: 96px; height: 48px; border-top: 1px solid #DCDCE0; border-bottom: 1px solid #DCDCE0; pointer-events: none; }
+.wheel-f { display: flex; gap: 10px; margin-top: 10px; }
+.wheel-f .btn { flex: 1; height: 48px; font-size: 16px; }
