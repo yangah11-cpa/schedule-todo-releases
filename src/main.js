@@ -263,6 +263,7 @@ app.whenReady().then(() => {
   );
   ipcMain.handle('push:notify', wrap((msg) => pushHub.notify(msg)));
   ipcMain.handle('drive:save', wrap((name, text) => google.saveAppFile(name, text)));
+  ipcMain.handle('drive:load', wrap((name) => google.loadAppFile(name)));
   ipcMain.handle('outlook:read', wrap((opt) => require('./outlook').readInbox(opt || {})));
   ipcMain.handle('outlook:selected', wrap(() => require('./outlook').readSelected()));
   // Outlook에서 메일을 고른 채 Ctrl+Shift+E → 이 프로그램이 앞으로 나와 그 메일로 일정/할 일 만들기

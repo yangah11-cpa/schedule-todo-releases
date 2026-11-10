@@ -13,7 +13,7 @@ contextBridge.exposeInMainWorld('api', {
   focus: call('app:focus'),
   prefs: { get: call('prefs:get'), set: call('prefs:set') },
   push: { init: call('push:init'), notify: call('push:notify') },
-  drive: { save: call('drive:save') },
+  drive: { save: call('drive:save'), load: call('drive:load') },
   team: { open: call('team:open') },
   outlook: { read: call('outlook:read'), selected: call('outlook:selected'), onPick: (cb) => ipcRenderer.on('outlook:pick', () => cb()) },
   patch: {

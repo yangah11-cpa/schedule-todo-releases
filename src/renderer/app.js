@@ -4,7 +4,7 @@ import { expandEvent, nextOccurrence, firstOnOrAfter, describeRule, parseQuickAd
 import { getHolidays } from './lib/holidays.js';
 import { solarPayload, lunarTargets, lunarPayload, fromGoogle, timeRange, composeDescription } from './lib/gsync.js';
 import { parseTeamWorkbook, myEngagements, teamOn, sameClient } from './lib/team.js';
-import { mailCandidates, stripQuoted, highlightHtml, parseShared, cleanSubject } from './lib/mailparse.js';
+import { mailCandidates, stripQuoted, highlightHtml, parseShared, cleanSubject, setKeywords, extractWords, scoreWords, mergeKeywords, keywordsOf, BASE_KEYS } from './lib/mailparse.js';
 
 /* ───────────── 공통 ───────────── */
 const $ = (s, r = document) => r.querySelector(s);
@@ -1507,6 +1507,7 @@ function openEventDialog({ ev = null, g = null, date = null, occ = null, preset 
         return;
       }
       close();
+      if (!ev && !g) learnWords(f.title); // 새로 직접 추가한 일정 → 핵심 단어 배우기
       onSaved?.();
     }
   });
@@ -1747,6 +1748,7 @@ function addQuickTodo(text) {
   }
   S.data.todos.push(t);
   save();
+  learnWords(t.title);
   renderAll();
 }
 
@@ -1974,6 +1976,7 @@ function openTodoDialog(existing = null, preset = null) {
         return;
       }
       saveTodo(existing, f);
+      if (!existing) learnWords(f.title);
       close();
     }
   });
@@ -2075,113 +2078,152 @@ async function openSettings() {
     { cls: 'wide', onClose: () => renderAll() }
   );
   const body = $('#setBody', el);
-  const draw = () => {
+  let page = null; // null = 첫 화면(메뉴)
+  const ext = (url, label) => `<button type="button" class="linkbtn" data-ext="${url}">${label}</button>`;
+  const pages = () => {
     const g = S.g;
-    const cals = S.calendars;
-    body.innerHTML = `
-      <section class="sect" style="border-top:0;padding-top:0">
-        <h2>Google 캘린더 연결</h2>
-        ${
+    const m = mailState();
+    const kw = kwStore();
+    const learned = Object.entries(kw.w || {}).filter(([, v]) => v.s > 0);
+    return [
+      {
+        id: 'google',
+        icon: '🔗',
+        title: 'Google 계정',
+        sum: g.connected ? `연결됨 · ${g.account || ''}` : '연결 안 됨',
+        html: () =>
           g.connected
-            ? `<div class="row gap8 wrap"><span class="small">연결된 계정: <b>${h(g.account || '알 수 없음')}</b></span><div class="spacer"></div><button type="button" class="btn danger" data-gdisconnect>연결 해제</button></div>
-              <div class="sect" style="border-top:0;padding-top:4px">
-                <h2 style="font-size:14px">할 일 ↔ Google Tasks (휴대폰 연동)</h2>
-                ${
-                  g.tasks && !g.drive
-                    ? `<div class="row gap8 wrap"><span class="note">팀 일정을 휴대폰 앱에서 보려면 Google Cloud 콘솔에서 <button type="button" class="linkbtn" data-ext="https://console.cloud.google.com/apis/library/drive.googleapis.com">Google Drive API</button>를 켠 뒤 다시 연결하세요. (드라이브는 이 앱 전용 숨김 공간만 사용)</span>
-                       <button type="button" class="btn" data-greconnect>드라이브 권한 추가 (다시 연결)</button><span class="small muted" id="s-gmsg2"></span></div>`
-                    : ''
-                }
-                ${
-                  g.tasks
-                    ? `<label class="checkline small"><input type="checkbox" id="s-tasks" ${st.tasksSync !== false ? 'checked' : ''}>할 일을 Google Tasks "내 할 일" 목록과 동기화</label>
-                       <span class="note">휴대폰의 Google Tasks 앱이나 구글 캘린더 앱에서 보고, 추가하고, 완료할 수 있습니다. 제목·메모·기한 날짜·완료·하위 할 일이 동기화되고, 시간·반복 규칙·알림은 이 PC에만 보관됩니다.</span>
-                       <h2 style="font-size:14px;margin-top:6px">휴대폰 앱 알림</h2>
-                       <span class="small" id="s-phone">${S.pushDevices ? (S.pushDevices.length ? `연결된 휴대폰: ${h(S.pushDevices.join(', '))}` : '연결된 휴대폰 없음 — 휴대폰 앱의 설정에서 "이 휴대폰으로 알림 받기"를 누르세요.') : '확인 중…'}</span>
-                       <label class="checkline small"><input type="checkbox" id="s-phoneev" ${st.phoneEvents ? 'checked' : ''}>Google 캘린더 일정 알림도 휴대폰 앱으로 보내기 (구글 캘린더 앱 알림과 겹칠 수 있음)</label>
-                       <span class="note">할 일 알림은 항상 휴대폰 앱으로도 보냅니다. PC가 켜져 있고 이 프로그램이 실행 중일 때 전달됩니다.</span>
-                       <span class="small ${S.taskError ? 'err' : 'muted'}" id="s-taskmsg">${S.taskError ? h(S.taskError) : S.taskSyncedAt ? `마지막 동기화: ${new Date(S.taskSyncedAt).toLocaleTimeString('ko-KR')}` : ''}</span>`
-                    : `<span class="note">할 일을 휴대폰과 연동하려면 Google Cloud 콘솔에서 <button type="button" class="linkbtn" data-ext="https://console.cloud.google.com/apis/library/tasks.googleapis.com">Tasks API</button>를 "사용"으로 켠 뒤, 아래 버튼으로 다시 연결해 할 일 권한을 승인하세요.</span>
-                       <div class="row gap8"><button type="button" class="btn primary" data-greconnect>할 일 권한 추가 (다시 연결)</button><span class="small muted" id="s-gmsg2"></span></div>`
-                }
-              </div>`
+            ? `<div class="row gap8 wrap"><span class="small">계정 <b>${h(g.account || '알 수 없음')}</b></span><div class="spacer"></div><button type="button" class="btn danger" data-gdisconnect>연결 해제</button></div>
+               <div class="kv"><span>캘린더</span><b class="ok">사용 중</b></div>
+               <div class="kv"><span>할 일(Tasks)</span>${g.tasks ? '<b class="ok">사용 중</b>' : `<b class="err">권한 없음</b> ${ext('https://console.cloud.google.com/apis/library/tasks.googleapis.com', 'API 켜기')}`}</div>
+               <div class="kv"><span>드라이브(휴대폰 공유)</span>${g.drive ? '<b class="ok">사용 중</b>' : `<b class="err">권한 없음</b> ${ext('https://console.cloud.google.com/apis/library/drive.googleapis.com', 'API 켜기')}`}</div>
+               ${!g.tasks || !g.drive ? '<div class="row gap8"><button type="button" class="btn primary" data-greconnect>권한 추가 (다시 연결)</button><span class="small muted" id="s-gmsg2"></span></div>' : ''}`
             : `<ol class="steps">
-                <li><button type="button" class="linkbtn" data-ext="https://console.cloud.google.com/projectcreate">Google Cloud 콘솔</button>에서 프로젝트를 하나 만듭니다.</li>
-                <li><button type="button" class="linkbtn" data-ext="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com">Google Calendar API</button>를 "사용"으로 설정합니다.</li>
-                <li><button type="button" class="linkbtn" data-ext="https://console.cloud.google.com/auth/overview">OAuth 동의 화면(Google 인증 플랫폼)</button>을 구성합니다. 대상은 "외부", 본인 Gmail을 테스트 사용자로 추가한 뒤 게시 상태를 <b>"프로덕션"</b>으로 바꾸세요. (테스트 상태로 두면 7일마다 다시 로그인해야 합니다.)</li>
-                <li><button type="button" class="linkbtn" data-ext="https://console.cloud.google.com/auth/clients">클라이언트</button> 메뉴에서 "OAuth 클라이언트 ID 만들기" → 애플리케이션 유형 <b>"데스크톱 앱"</b>을 선택하고, 발급된 클라이언트 ID와 보안 비밀번호를 아래에 붙여넣습니다.</li>
-                <li>"연결"을 누르면 브라우저에서 로그인 창이 열립니다. "확인되지 않은 앱" 경고가 나오면 고급 → 이동을 눌러 허용하세요 (본인이 만든 앱).</li>
+                <li>${ext('https://console.cloud.google.com/projectcreate', 'Google Cloud')}에서 프로젝트 만들기</li>
+                <li>${ext('https://console.cloud.google.com/apis/library/calendar-json.googleapis.com', 'Calendar API')} 켜기</li>
+                <li>${ext('https://console.cloud.google.com/auth/overview', 'OAuth 동의 화면')}: 외부 · <b>프로덕션</b>으로 게시</li>
+                <li>${ext('https://console.cloud.google.com/auth/clients', '클라이언트')} → <b>데스크톱 앱</b> ID 발급 후 아래에 붙여넣기</li>
               </ol>
               <div class="fld"><label class="lbl" for="s-cid">클라이언트 ID</label><input class="inp" id="s-cid" value="${h(g.clientId || '')}" placeholder="xxxxxxxx.apps.googleusercontent.com"></div>
-              <div class="fld"><label class="lbl" for="s-sec">클라이언트 보안 비밀번호</label><input class="inp" id="s-sec" type="password" placeholder="${g.configured ? '저장됨 (변경할 때만 입력)' : 'GOCSPX-…'}"></div>
-              <div class="row gap8"><button type="button" class="btn primary" data-gconnect>연결</button><span class="small muted" id="s-gmsg"></span></div>`
-        }
-      </section>
-      ${
-        g.connected && cals.length
-          ? `<section class="sect"><h2>표시할 Google 캘린더</h2>
-              <div class="callist">${cals
-                .map(
-                  (c) => `<label class="checkline small"><input type="checkbox" data-calvis="${h(c.id)}" ${isCalVisible(c) ? 'checked' : ''}><span class="cdot" style="display:inline-block;width:10px;height:10px;border-radius:99px;background:${h(c.color || '#999')}"></span>${h(c.summary)}${c.primary ? ' (기본)' : ''}${c.writable ? '' : ' · 읽기 전용'}</label>`
-                )
-                .join('')}</div>
-              <span class="note">"대한민국의 휴일" 같은 휴일 캘린더는 일정이 아니라 날짜 옆에 휴일 이름으로 표시되며, 켜 두면 프로그램 내장 공휴일 대신 사용됩니다.</span>
-            </section>`
-          : ''
-      }
-      <section class="sect"><h2>일정</h2>
-        <div class="grid2">
-          <div class="fld"><label class="lbl" for="s-ly">음력 반복 일정을 Google에 등록할 기간</label>
-            <select class="inp" id="s-ly">${[5, 10, 20, 30].map((n) => `<option value="${n}" ${st.lunarYears === n ? 'selected' : ''}>앞으로 ${n}년</option>`).join('')}</select></div>
-          <div></div>
-        </div>
-        <label class="checkline small"><input type="checkbox" id="s-hol" ${st.showHolidays ? 'checked' : ''}>공휴일 표시 (대체공휴일 포함, 선거일·임시공휴일 제외)</label>
-        <label class="checkline small"><input type="checkbox" id="s-lun" ${st.showLunar ? 'checked' : ''}>음력 날짜 표시</label>
-      </section>
-      <section class="sect"><h2>팀 일정표</h2>
-        <div class="row gap8 wrap">
-          <label class="small" for="s-teamme">일정표의 내 이름</label>
-          <input class="inp" id="s-teamme" value="${h(st.teamMe || '')}" style="width:120px;height:34px">
-          <button type="button" class="btn" data-teamimport>엑셀 가져오기</button>
-        </div>
-        <span class="note">${
-          S.data.team
-            ? `마지막 가져오기: ${h(S.data.team.fileName)} (${h(S.data.team.parsed.map((p) => p.asOf || '').filter(Boolean).join(', ') || '기준일 없음')} 기준) · 달력 날짜를 오른쪽 클릭하면 팀원 일정`
-            : '내가 참여하는 일정만 참여 인원과 함께 캘린더에 등록하고, 나머지 팀원 일정은 이 PC에만 보관합니다. 달력 날짜를 오른쪽 클릭하면 팀원 일정을 볼 수 있습니다.'
-        }</span>
-        ${
-          S.data.team
-            ? `<div class="row gap8 wrap" style="margin-top:6px">
-                 <span class="small" style="font-weight:600">휴대폰 앱으로 보내기</span>
-                 <span id="s-teamphone" class="small ${phoneShareText().cls}">${h(phoneShareText().text)}</span>
-                 <div class="spacer"></div>
-                 ${S.g.connected && !S.g.drive ? '<button type="button" class="btn" data-greconnect>드라이브 권한 추가 (다시 연결)</button>' : ''}
-                 <button type="button" class="btn" data-teamsend>다시 보내기</button>
-               </div>
-               <span class="note">구글 드라이브의 이 앱 전용 숨김 공간에만 올라가며, 캘린더·드라이브 목록에는 보이지 않습니다. Google Cloud 콘솔에서 <button type="button" class="linkbtn" data-ext="https://console.cloud.google.com/apis/library/drive.googleapis.com">Google Drive API</button>가 "사용"이어야 합니다.</span>`
-            : ''
-        }
-      </section>
-      <section class="sect"><h2>시작·알림</h2>
-        <label class="checkline small"><input type="checkbox" id="s-autostart" ${prefs.autoStart ? 'checked' : ''}>Windows 시작 시 자동 실행 (트레이에서 조용히 시작)</label>
-        <label class="checkline small"><input type="checkbox" id="s-tray" ${prefs.closeToTray ? 'checked' : ''}>창을 닫아도 트레이에서 계속 실행 (알림을 받으려면 켜 두세요)</label>
-        <span class="note">알림은 프로그램이 실행 중일 때 이 컴퓨터에만 표시됩니다. 완전히 끄려면 트레이 아이콘을 우클릭해 "종료"를 누르세요.</span>
-      </section>
-      <section class="sect"><h2>업데이트</h2>
-        <div class="row gap8 wrap"><span class="small">현재 버전 ${h(ver)}${info?.source === 'patch' ? ` <span class="muted">(즉시 적용 · 설치본 ${h(info.bundledVersion)})</span>` : ''}</span><button type="button" class="btn" data-updcheck>업데이트 확인</button><span class="small muted" id="updMsg"></span></div>
-        <span class="note">새 버전은 자동으로 내려받아 두었다가 프로그램을 닫을 때 설치됩니다.</span>
-      </section>
-      <section class="sect"><h2>데이터</h2>
-        <div class="row gap8 wrap"><button type="button" class="btn" data-export>내보내기 (백업)</button><button type="button" class="btn" data-import>가져오기 (복원)</button></div>
-        <span class="note">할 일과 "이 PC에만" 일정은 이 컴퓨터에 저장됩니다. 다른 PC로 옮길 때 내보내기/가져오기를 사용하세요.</span>
-      </section>`;
-
+              <div class="fld"><label class="lbl" for="s-sec">보안 비밀번호</label><input class="inp" id="s-sec" type="password" placeholder="${g.configured ? '저장됨 (바꿀 때만 입력)' : 'GOCSPX-…'}"></div>
+              <div class="row gap8"><button type="button" class="btn primary" data-gconnect>연결</button><span class="small muted" id="s-gmsg"></span></div>`,
+      },
+      {
+        id: 'cal',
+        icon: '📅',
+        title: '캘린더 · 표시',
+        sum: `${st.showHolidays ? '공휴일' : ''}${st.showHolidays && st.showLunar ? ' · ' : ''}${st.showLunar ? '음력' : ''}${g.connected ? ` · 캘린더 ${cals().filter(isCalVisible).length}개` : ''}`,
+        html: () => `
+          ${
+            g.connected && cals().length
+              ? `<div class="lbl">표시할 캘린더</div><div class="callist">${cals()
+                  .map(
+                    (c) => `<label class="checkline small"><input type="checkbox" data-calvis="${h(c.id)}" ${isCalVisible(c) ? 'checked' : ''}><span class="cdot" style="display:inline-block;width:10px;height:10px;border-radius:99px;background:${h(c.color || '#999')}"></span>${h(c.summary)}${c.primary ? ' (기본)' : ''}${c.writable ? '' : ' · 읽기 전용'}</label>`
+                  )
+                  .join('')}</div>`
+              : ''
+          }
+          <label class="checkline small"><input type="checkbox" id="s-hol" ${st.showHolidays ? 'checked' : ''}>공휴일 표시</label>
+          <label class="checkline small"><input type="checkbox" id="s-lun" ${st.showLunar ? 'checked' : ''}>음력 날짜 표시</label>
+          <div class="row gap8"><label class="small" for="s-ly">음력 반복 일정 등록 기간</label>
+            <select class="inp" id="s-ly" style="width:auto;height:34px">${[5, 10, 20, 30].map((n) => `<option value="${n}" ${st.lunarYears === n ? 'selected' : ''}>${n}년</option>`).join('')}</select></div>`,
+      },
+      {
+        id: 'phone',
+        icon: '📱',
+        title: '휴대폰 연동',
+        sum: !g.connected || !g.tasks ? '사용 안 함' : `할 일 동기화 ${st.tasksSync !== false ? '켬' : '끔'}${S.pushDevices?.length ? ` · 알림 ${S.pushDevices.length}대` : ''}`,
+        html: () =>
+          g.connected && g.tasks
+            ? `<label class="checkline small"><input type="checkbox" id="s-tasks" ${st.tasksSync !== false ? 'checked' : ''}>할 일을 Google Tasks와 동기화</label>
+               <span class="note">시간·반복·알림은 이 PC에만 보관됩니다.</span>
+               <span class="small ${S.taskError ? 'err' : 'muted'}" id="s-taskmsg">${S.taskError ? h(S.taskError) : S.taskSyncedAt ? `마지막 동기화 ${new Date(S.taskSyncedAt).toLocaleTimeString('ko-KR')}` : ''}</span>
+               <div class="lbl" style="margin-top:6px">휴대폰 알림</div>
+               <span class="small" id="s-phone">${S.pushDevices ? (S.pushDevices.length ? `연결된 휴대폰: ${h(S.pushDevices.join(', '))}` : '연결된 휴대폰 없음 (휴대폰 앱 설정에서 켜기)') : '확인 중…'}</span>
+               <label class="checkline small"><input type="checkbox" id="s-phoneev" ${st.phoneEvents ? 'checked' : ''}>캘린더 일정 알림도 보내기</label>
+               <span class="note">할 일 알림은 항상 보냅니다. PC 프로그램이 켜져 있을 때만 전달됩니다.</span>`
+            : `<span class="note">Google 계정에서 할 일(Tasks) 권한을 먼저 추가하세요.</span><button type="button" class="btn" data-page="google">Google 계정 열기</button>`,
+      },
+      {
+        id: 'team',
+        icon: '👥',
+        title: '팀 일정표',
+        sum: S.data.team ? `${S.data.team.fileName}` : '가져온 일정표 없음',
+        html: () => `
+          <div class="row gap8 wrap"><label class="small" for="s-teamme">내 이름</label>
+            <input class="inp" id="s-teamme" value="${h(st.teamMe || '')}" style="width:120px;height:34px">
+            <button type="button" class="btn primary" data-teamimport>엑셀 가져오기</button></div>
+          ${
+            S.data.team
+              ? `<div class="kv"><span>마지막 가져오기</span><b>${h(S.data.team.fileName)}</b></div>
+                 <div class="kv"><span>휴대폰 앱</span><span id="s-teamphone" class="small ${phoneShareText().cls}">${h(phoneShareText().text)}</span><button type="button" class="btn" data-teamsend>다시 보내기</button></div>`
+              : ''
+          }
+          <span class="note">내 일정만 캘린더에 등록하고, 팀원 일정은 날짜 오른쪽 클릭으로 봅니다.</span>`,
+      },
+      {
+        id: 'mail',
+        icon: '✉',
+        title: '메일 일정 (Outlook)',
+        sum: `자동 확인 ${m.enabled ? '켬' : '끔'} · 배운 단어 ${learned.length}개`,
+        html: () => `
+          <label class="checkline small"><input type="checkbox" id="s-mailauto" ${m.enabled ? 'checked' : ''}>30분마다 받은 편지함 확인</label>
+          <div class="row gap8"><label class="small" for="s-maildays">확인 기간</label>
+            <select class="inp" id="s-maildays" style="width:auto;height:34px">${[3, 7, 14, 30].map((d) => `<option value="${d}" ${m.days === d ? 'selected' : ''}>최근 ${d}일</option>`).join('')}</select></div>
+          <span class="note">메일을 고르고 <b>Ctrl+Shift+E</b> → 일정·할 일로 바로 만들기</span>
+          <div class="lbl" style="margin-top:6px">내 일정 단어 <span class="muted" style="font-weight:400">· 직접 저장한 제목에서 배움, 무시하면 점수 감소 (휴대폰과 공유)</span></div>
+          <div class="kw-list">${
+            learned
+              .sort((a, b) => b[1].s - a[1].s)
+              .map(([w, v]) => `<span class="kw">${h(w)} <small>${+v.s.toFixed(1)}</small><button type="button" data-kwdel="${h(w)}" aria-label="${h(w)} 지우기">×</button></span>`)
+              .join('') || '<span class="small muted">아직 없음</span>'
+          }</div>
+          <div class="row gap8"><input class="inp" id="s-kwnew" placeholder="단어 추가" style="width:200px;height:34px"><button type="button" class="btn" data-kwadd>추가</button></div>
+          <details class="kw-base"><summary class="small">기본 단어 켜기/끄기</summary><div class="kw-list">${BASE_KEYS.map(
+            ([l]) => `<button type="button" class="kw b ${kw.off?.[l]?.v ? 'off' : ''}" data-kwoff="${h(l)}">${h(l)}</button>`
+          ).join('')}</div></details>`,
+      },
+      {
+        id: 'app',
+        icon: '⚙',
+        title: '프로그램',
+        sum: `버전 ${ver}${prefs.autoStart ? ' · 자동 실행' : ''}`,
+        html: () => `
+          <label class="checkline small"><input type="checkbox" id="s-autostart" ${prefs.autoStart ? 'checked' : ''}>Windows 시작 시 자동 실행</label>
+          <label class="checkline small"><input type="checkbox" id="s-tray" ${prefs.closeToTray ? 'checked' : ''}>창을 닫아도 트레이에서 실행 (알림 받기)</label>
+          <div class="row gap8 wrap" style="margin-top:6px"><span class="small">버전 ${h(ver)}${info?.source === 'patch' ? ` <span class="muted">(설치본 ${h(info.bundledVersion)})</span>` : ''}</span><button type="button" class="btn" data-updcheck>업데이트 확인</button><span class="small muted" id="updMsg"></span></div>
+          <div class="row gap8 wrap" style="margin-top:6px"><span class="small">데이터</span><button type="button" class="btn" data-export>백업</button><button type="button" class="btn" data-import>복원</button></div>
+          <span class="note">할 일과 "이 PC에만" 일정은 이 컴퓨터에 저장됩니다.</span>`,
+      },
+    ];
+  };
+  const cals = () => S.calendars;
+  const draw = () => {
+    const ps = pages();
+    const pg = ps.find((x) => x.id === page);
+    $('.mhead h1', el).innerHTML = pg ? `<button type="button" class="btn ghost icon" data-page="" aria-label="뒤로">‹</button> ${h(pg.title)}` : '설정';
+    body.innerHTML = pg
+      ? `<div class="sect" style="border-top:0;padding-top:0">${pg.html()}</div>`
+      : `<div class="setmenu">${ps
+          .map((x) => `<button type="button" class="setrow" data-page="${x.id}"><span class="si">${x.icon}</span><span class="st"><b>${h(x.title)}</b><small>${h(x.sum)}</small></span><span class="sc">›</span></button>`)
+          .join('')}</div>`;
     renderUpdate();
   };
   draw();
 
   body.addEventListener('change', async (e) => {
     const t = e.target;
+    if (t.id === 's-mailauto') {
+      mailState().enabled = t.checked;
+      save();
+      if (t.checked) scanMail();
+      return;
+    }
+    if (t.id === 's-maildays') {
+      mailState().days = +t.value;
+      save();
+      return;
+    }
     if (t.id === 's-teamme') {
       st.teamMe = t.value.trim();
       save();
@@ -2223,6 +2265,30 @@ async function openSettings() {
   body.addEventListener('click', async (e) => {
     const ext = e.target.closest('[data-ext]');
     if (ext) return window.api.openExternal(ext.dataset.ext);
+    if (e.target.closest('[data-page]')) return; // 페이지 이동은 아래(el)에서
+    const kd = e.target.closest('[data-kwdel]');
+    if (kd) {
+      kwStore().w[kd.dataset.kwdel] = { s: 0, t: Date.now() };
+      saveKw();
+      return draw();
+    }
+    if (e.target.closest('[data-kwadd]')) {
+      const w = $('#s-kwnew', body).value.trim().replace(/\s+/g, ' ');
+      if (w.length < 2) return toast('두 글자 이상 입력하세요.');
+      kwStore().w[w] = { s: Math.max(2, kwStore().w[w]?.s || 0), t: Date.now() };
+      saveKw();
+      return draw();
+    }
+    const ko = e.target.closest('[data-kwoff]');
+    if (ko) {
+      const kw = kwStore();
+      kw.off ||= {};
+      kw.off[ko.dataset.kwoff] = { v: !kw.off[ko.dataset.kwoff]?.v, t: Date.now() };
+      saveKw();
+      draw();
+      $('.kw-base', body).open = true;
+      return;
+    }
     if (e.target.closest('[data-gconnect]')) {
       const msg = $('#s-gmsg', body);
       const id = $('#s-cid', body).value.trim();
@@ -2322,7 +2388,12 @@ async function openSettings() {
     }
   });
   el.addEventListener('click', (e) => {
-    if (e.target.closest('[data-close]')) close();
+    if (e.target.closest('[data-close]')) return close();
+    const pgb = e.target.closest('[data-page]');
+    if (pgb) {
+      page = pgb.dataset.page || null;
+      draw();
+    }
   });
 }
 
@@ -3195,6 +3266,8 @@ async function init() {
   }
 
   renderMailBadge();
+  setKeywords(keywordsOf(kwStore()));
+  setTimeout(() => syncKw(), 8000); // 휴대폰과 단어 목록 맞추기
   window.api.outlook.onPick?.(() => pickOutlookMail());
   setTimeout(() => mailState().enabled && scanMail(), 20000); // 시작 20초 뒤 첫 확인
   setInterval(() => mailState().enabled && scanMail(), 30 * 60 * 1000); // 30분마다
@@ -3352,6 +3425,7 @@ function openMailDialog() {
             .map(
               (c) => `<div class="mailc">
                 <div class="mailw"><span class="mwhen">${h(mailWhen(c))}</span>${c.meeting ? '<span class="tag">모임 요청</span>' : ''}${c.att ? `<span class="tag att" title="첨부 파일에서 찾음">📎 ${h(c.att)}</span>` : ''}${c.place ? `<span class="small muted">· ${h(c.place)}</span>` : ''}
+                  ${c.why?.length ? `<div class="small muted">배운 단어로 찾음: ${h(c.why.join(', '))}</div>` : ''}
                   <div class="small muted msnip">${c.meeting ? h(c.snippet) : highlightHtml(c.snippet, c.hits, h)}</div></div>
                 <button type="button" class="btn" data-mskip="${h(c.key)}">무시</button>
                 <button type="button" class="btn primary" data-madd="${h(c.key)}">일정 추가</button>
@@ -3411,7 +3485,10 @@ function openMailDialog() {
       return;
     }
     const sk = e.target.closest('[data-mskip]');
-    if (sk) return markDone(sk.dataset.mskip);
+    if (sk) {
+      penalizeWords(m.cands.find((c) => c.key === sk.dataset.mskip)?.why); // 배운 단어 때문에 잡힌 후보면 점수 나눠 깎기
+      return markDone(sk.dataset.mskip);
+    }
     const ad = e.target.closest('[data-madd]');
     if (ad) {
       const c = m.cands.find((x) => x.key === ad.dataset.madd);
@@ -3592,5 +3669,57 @@ function openPickedMail(mail) {
       $('[data-mk="event"]', el).click();
     }
   });
+}
+
+/* ───────────── 내 일정 단어 (배우기 · 휴대폰과 공유) ───────────── */
+function kwStore() {
+  S.data.kw ||= { w: {}, off: {} };
+  return S.data.kw;
+}
+let kwTimer = null;
+function saveKw() {
+  save();
+  setKeywords(keywordsOf(kwStore()));
+  clearTimeout(kwTimer);
+  kwTimer = setTimeout(() => syncKw(true), 2500);
+}
+/** 드라이브(앱 전용 숨김 공간)의 목록과 합치기 */
+async function syncKw(write = false) {
+  if (!S.g?.connected || !S.g?.drive) return;
+  try {
+    const r = await window.api.drive.load('keywords.json');
+    if (!r.ok) return;
+    const remote = r.data ? JSON.parse(r.data) : {};
+    const merged = mergeKeywords(kwStore(), remote);
+    const changed = JSON.stringify(merged) !== JSON.stringify(remote);
+    S.data.kw = merged;
+    save();
+    setKeywords(keywordsOf(merged));
+    if (write || changed) await window.api.drive.save('keywords.json', JSON.stringify(merged));
+  } catch {
+    /* 오프라인 등: 이 PC 안에서만 */
+  }
+}
+/** 회사 이름(일정 제목 첫 단어·팀 일정표 회사)은 배우지 않음 */
+function companyNames() {
+  const out = new Set();
+  for (const e of S.data.events || []) {
+    // "세운철강 중간감사"처럼 '회사 + 업무' 형태일 때만 첫 단어를 회사로 봄
+    const [w, ...rest] = String(e.title || '').replace(/^(\(주\)|㈜|주식회사)\s*/, '').split(/\s+/);
+    if (w && /감사|실사|검토|평가|자문|실무|결산|컨설팅|용역/.test(rest.join(' '))) out.add(w);
+  }
+  for (const p of S.data.team?.parsed || []) for (const person of p.people) for (const en of person.entries) out.add(en.text);
+  return out;
+}
+function learnWords(title) {
+  const ws = extractWords(title, companyNames());
+  if (!ws.length) return;
+  scoreWords(kwStore(), ws, +1);
+  saveKw();
+}
+function penalizeWords(words) {
+  if (!words?.length) return;
+  scoreWords(kwStore(), words, -1);
+  saveKw();
 }
 

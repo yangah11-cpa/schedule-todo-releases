@@ -270,6 +270,18 @@ class GoogleCalendar {
     return j.id;
   }
 
+  /** 앱 전용 숨김 공간의 파일 읽기 (없으면 null) */
+  async loadAppFile(name) {
+    const q = new URLSearchParams({ spaces: 'appDataFolder', q: `name='${name.replace(/'/g, "\\'")}'`, fields: 'files(id)' });
+    const found = await this.api('GET', `/files?${q}`, null, true, DRIVE_API);
+    const id = found.files?.[0]?.id;
+    if (!id) return null;
+    const token = await this._accessToken();
+    const r = await fetch(`${DRIVE_API}/files/${encodeURIComponent(id)}?alt=media`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!r.ok) throw Object.assign(new Error(`드라이브 읽기 실패 (${r.status})`), { status: r.status });
+    return r.text();
+  }
+
   /* ───── Google Tasks (할 일) ───── */
   tasks(method, p, body) {
     return this.api(method, p, body, true, TASKS_API);

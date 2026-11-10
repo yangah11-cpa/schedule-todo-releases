@@ -1800,7 +1800,13 @@ async function syncKw(write = false) {
 }
 /** 직접 저장한 일정·할 일 제목에서 핵심 단어 배우기 (회사 이름 제외) */
 function learnWords(title) {
-  const ex = new Set(Object.keys(S.hist).map((k) => firstToken(k)));
+  // "세운철강 중간감사"처럼 '회사 + 업무' 형태의 첫 단어는 회사 이름으로 보고 배우지 않음
+  const ex = new Set(
+    [...Object.keys(S.hist), ...S.events.map((e) => e.title || '')]
+      .map((k) => stripCorp(k).split(' '))
+      .filter(([, ...rest]) => /감사|실사|검토|평가|자문|실무|결산|컨설팅|용역/.test(rest.join(' ')))
+      .map(([w]) => w)
+  );
   const ws = extractWords(title, ex);
   if (!ws.length) return;
   scoreWords(KW, ws, +1);
