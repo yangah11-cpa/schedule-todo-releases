@@ -262,6 +262,7 @@ app.whenReady().then(() => {
   );
   ipcMain.handle('push:notify', wrap((msg) => pushHub.notify(msg)));
   ipcMain.handle('drive:save', wrap((name, text) => google.saveAppFile(name, text)));
+  ipcMain.handle('outlook:read', wrap((opt) => require('./outlook').readInbox(opt || {})));
 
   createWindow();
   setupAutoUpdate();

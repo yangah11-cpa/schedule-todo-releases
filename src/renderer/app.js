@@ -4,6 +4,7 @@ import { expandEvent, nextOccurrence, firstOnOrAfter, describeRule, parseQuickAd
 import { getHolidays } from './lib/holidays.js';
 import { solarPayload, lunarTargets, lunarPayload, fromGoogle, timeRange, composeDescription } from './lib/gsync.js';
 import { parseTeamWorkbook, myEngagements, teamOn, sameClient } from './lib/team.js';
+import { mailCandidates } from './lib/mailparse.js';
 
 /* ───────────── 공통 ───────────── */
 const $ = (s, r = document) => r.querySelector(s);
@@ -1175,7 +1176,7 @@ function knownPeople() {
   return [...set.entries()].sort((a, b) => b[1] - a[1]).map((x) => x[0]).slice(0, 100);
 }
 
-function openEventDialog({ ev = null, g = null, date = null, occ = null } = {}) {
+function openEventDialog({ ev = null, g = null, date = null, occ = null, preset = null, onSaved = null } = {}) {
   const today = D.today();
   const base = date || today;
   const ext = !!g; // 다른 곳에서 만든 Google 일정
@@ -1202,6 +1203,10 @@ function openEventDialog({ ev = null, g = null, date = null, occ = null } = {}) 
   };
   // 새 일정일 때만 자동 채우기. 사용자가 직접 고친 칸은 건드리지 않음
   const auto = { on: !src, placeTouched: false, peopleTouched: false, from: null, filledPlace: false, filledPeople: false };
+  if (preset && !src) {
+    Object.assign(f, preset);
+    if (preset.place) auto.placeTouched = true;
+  }
   const readonly = ext && !g.writable;
   const recurringExt = ext && !!g.recurringEventId;
 
@@ -1502,6 +1507,7 @@ function openEventDialog({ ev = null, g = null, date = null, occ = null } = {}) 
         return;
       }
       close();
+      onSaved?.();
     }
   });
 }
@@ -2977,6 +2983,7 @@ function bind() {
     };
   });
   $('#btnTeamImport').onclick = () => importTeam();
+  $('#btnMail').onclick = () => openMailDialog();
   $('#btnAddEvent').onclick = () => openEventDialog({ date: S.view === 'month' && S.cursor.slice(0, 7) !== D.today().slice(0, 7) ? S.cursor : S.view === 'month' ? D.today() : S.cursor });
   $('#btnSync').onclick = () => {
     S.gRange = null;
@@ -3187,6 +3194,10 @@ async function init() {
     uploadTeamForPhone(false, true); // 아직 휴대폰으로 못 보냈으면 시작할 때 다시 시도
   }
 
+  renderMailBadge();
+  setTimeout(() => mailState().enabled && scanMail(), 20000); // 시작 20초 뒤 첫 확인
+  setInterval(() => mailState().enabled && scanMail(), 10 * 60 * 1000); // 10분마다
+
   let lastDay = D.today();
   setInterval(() => {
     checkAlarms();
@@ -3220,3 +3231,178 @@ function autoEndTime(f, root, start) {
   void et.offsetWidth;
   et.classList.add('autofilled');
 }
+
+/* ───────────── Outlook 메일 → 일정 후보 ───────────── */
+function mailState() {
+  S.data.mail ||= { enabled: false, days: 7, done: {}, cands: [], lastScan: null, lastError: null };
+  return S.data.mail;
+}
+function renderMailBadge() {
+  const b = $('#mailBadge');
+  if (!b) return;
+  const n = mailState().cands.length;
+  b.hidden = !n;
+  b.textContent = n;
+}
+const MAIL_ERR = {
+  notRunning: 'Outlook이 실행 중이 아니어서 확인하지 못했습니다. Outlook을 켜 두거나 "지금 확인"을 누르세요.',
+  noOutlook: 'PC에 설치된 Outlook을 찾지 못했습니다. 클래식 Outlook(Microsoft 365/Office)만 지원되며, "새 Outlook"은 지원되지 않습니다.',
+};
+let mailBusy = false;
+async function scanMail(manual = false) {
+  if (mailBusy) return;
+  mailBusy = true;
+  const m = mailState();
+  try {
+    const r = await window.api.outlook.read({ days: m.days, start: manual });
+    const res = r.ok ? r.data : { ok: false, error: r.error };
+    if (!res.ok) {
+      m.lastError = MAIL_ERR[res.code] || `메일을 읽지 못했습니다: ${res.error || '알 수 없는 오류'}`;
+      if (res.code === 'notRunning' && !manual) m.lastError = MAIL_ERR.notRunning;
+      save();
+      if (manual) toast(m.lastError);
+      return;
+    }
+    const today = D.today();
+    // 처리한 후보 기록은 90일 지나면 정리
+    const cut = Date.now() - 90 * 864e5;
+    for (const [k, t] of Object.entries(m.done)) if (t < cut) delete m.done[k];
+    const prev = new Set(m.cands.map((c) => c.key));
+    const cands = [];
+    for (const mail of res.mails || []) {
+      for (const c of mailCandidates(mail, today)) {
+        if (m.done[c.key]) continue;
+        cands.push({ ...c, subject: mail.subject, from: mail.from, received: mail.received });
+      }
+    }
+    m.cands = cands;
+    m.lastScan = Date.now();
+    m.lastError = null;
+    save();
+    renderMailBadge();
+    const fresh = cands.filter((c) => !prev.has(c.key));
+    if (fresh.length && !manual && m.notified !== fresh.map((c) => c.key).join()) {
+      m.notified = fresh.map((c) => c.key).join();
+      try {
+        const n = new Notification('메일에서 일정 후보를 찾았습니다', { body: fresh.slice(0, 3).map((c) => `${mailWhen(c)} ${c.title}`).join('\n') });
+        n.onclick = () => {
+          window.api.focus?.();
+          openMailDialog();
+        };
+      } catch {
+        /* 알림 실패는 무시 */
+      }
+    }
+    if (manual) toast(cands.length ? `일정 후보 ${cands.length}건을 찾았습니다.` : '새 일정 후보가 없습니다.');
+    refreshMailDialog?.();
+  } finally {
+    mailBusy = false;
+  }
+}
+function mailWhen(c) {
+  const d = (x) => `${+x.slice(5, 7)}/${+x.slice(8, 10)}(${'일월화수목금토'[D.dow(x)]})`;
+  let s = d(c.date);
+  if (c.endDate && c.endDate !== c.date) s += ` ~ ${d(c.endDate)}`;
+  if (c.startTime) s += ` ${c.startTime}${c.endTime ? `~${c.endTime}` : ''}`;
+  return s;
+}
+let refreshMailDialog = null;
+function openMailDialog() {
+  const m = mailState();
+  const { el, close } = openModal(
+    `<div class="mhead"><h1>메일 일정 후보</h1><button type="button" class="btn ghost icon" data-x aria-label="닫기">✕</button></div>
+     <div class="mbody" id="mailBody"></div>
+     <div class="mfoot">
+       <label class="checkline small"><input type="checkbox" id="mail-auto" ${m.enabled ? 'checked' : ''}>10분마다 자동 확인</label>
+       <select class="inp small" id="mail-days" style="width:auto;height:32px">${[3, 7, 14, 30].map((d) => `<option value="${d}" ${m.days === d ? 'selected' : ''}>최근 ${d}일</option>`).join('')}</select>
+       <div class="spacer"></div>
+       <button type="button" class="btn" data-scan>지금 확인</button>
+       <button type="button" class="btn primary" data-x>닫기</button>
+     </div>`,
+    { cls: 'wide', onClose: () => (refreshMailDialog = null) }
+  );
+  const body = $('#mailBody', el);
+  const draw = () => {
+    const st = m.lastError
+      ? `<div class="warn">${h(m.lastError)}</div>`
+      : `<div class="note">${m.lastScan ? `마지막 확인: ${new Date(m.lastScan).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · ` : ''}PC의 Outlook 받은 편지함에서 날짜·시간이 적힌 메일을 찾아 보여 줍니다. 메일 내용은 이 PC 안에서만 처리합니다.</div>`;
+    const groups = new Map();
+    for (const c of m.cands) {
+      if (!groups.has(c.mailId)) groups.set(c.mailId, []);
+      groups.get(c.mailId).push(c);
+    }
+    const list = [...groups.values()]
+      .map(
+        (cs) => `<div class="mailg">
+          <div class="mailh"><b>${h(cs[0].subject || '(제목 없음)')}</b><span class="small muted">${h(cs[0].from || '')} · ${h((cs[0].received || '').slice(5, 16).replace('T', ' ').replace('-', '/'))}</span></div>
+          ${cs
+            .map(
+              (c) => `<div class="mailc">
+                <div class="mailw"><span class="mwhen">${h(mailWhen(c))}</span>${c.meeting ? '<span class="tag">모임 요청</span>' : ''}${c.place ? `<span class="small muted">· ${h(c.place)}</span>` : ''}
+                  <div class="small muted msnip">${h(c.snippet)}</div></div>
+                <button type="button" class="btn" data-mskip="${h(c.key)}">무시</button>
+                <button type="button" class="btn primary" data-madd="${h(c.key)}">일정 추가</button>
+              </div>`
+            )
+            .join('')}
+        </div>`
+      )
+      .join('');
+    body.innerHTML = st + (list || `<div class="empty">${m.lastScan ? '새 일정 후보가 없습니다.' : '"지금 확인"을 눌러 받은 편지함을 확인하세요.'}</div>`);
+  };
+  refreshMailDialog = draw;
+  draw();
+  const markDone = (key) => {
+    m.done[key] = Date.now();
+    m.cands = m.cands.filter((c) => c.key !== key);
+    save();
+    renderMailBadge();
+    draw();
+  };
+  el.addEventListener('change', (e) => {
+    if (e.target.id === 'mail-auto') {
+      m.enabled = e.target.checked;
+      save();
+      if (m.enabled) scanMail();
+    } else if (e.target.id === 'mail-days') {
+      m.days = +e.target.value;
+      save();
+    }
+  });
+  el.addEventListener('click', async (e) => {
+    if (e.target.closest('[data-x]')) return close();
+    if (e.target.closest('[data-scan]')) {
+      body.insertAdjacentHTML('afterbegin', '<div class="note" id="mail-wait">받은 편지함 확인 중… (Outlook이 꺼져 있으면 켜는 데 시간이 걸릴 수 있습니다)</div>');
+      await scanMail(true);
+      draw();
+      return;
+    }
+    const sk = e.target.closest('[data-mskip]');
+    if (sk) return markDone(sk.dataset.mskip);
+    const ad = e.target.closest('[data-madd]');
+    if (ad) {
+      const c = m.cands.find((x) => x.key === ad.dataset.madd);
+      if (!c) return;
+      const end1h = (t) => {
+        const [hh, mm] = t.split(':').map(Number);
+        const v = Math.min(hh * 60 + mm + 60, 23 * 60 + 59);
+        return `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`;
+      };
+      openEventDialog({
+        date: c.date,
+        preset: {
+          title: c.title,
+          date: c.date,
+          endDate: c.endDate || c.date,
+          allDay: c.allDay,
+          startTime: c.startTime || '09:00',
+          endTime: c.endTime || (c.startTime ? end1h(c.startTime) : '10:00'),
+          place: c.place || '',
+          memo: `메일: ${c.subject || ''}\n보낸 사람: ${c.from || ''} (${(c.received || '').slice(0, 16).replace('T', ' ')})${c.snippet && !c.meeting ? `\n${c.snippet}` : ''}`,
+        },
+        onSaved: () => markDone(c.key),
+      });
+    }
+  });
+}
+

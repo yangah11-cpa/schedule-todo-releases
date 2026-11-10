@@ -296,3 +296,13 @@ button.tchip .ed { font-style: normal; font-size: 11px; opacity: 0.75; margin-le
 /* 종료 시간 자동 입력 표시 */
 @keyframes autofill-flash { 0% { background: #DCE7FB; box-shadow: 0 0 0 2px #7FA2E8; } 100% { background: inherit; box-shadow: none; } }
 #e-et.autofilled { animation: autofill-flash 1.6s ease-out; }
+/* 메일 일정 후보 */
+.mbadge { display: inline-block; min-width: 18px; height: 18px; line-height: 18px; padding: 0 5px; margin-left: 6px; border-radius: 9px; background: #D9534F; color: #fff; font-size: 11px; font-weight: 700; text-align: center; }
+.mailg { border: 1px solid var(--line, #E5E3DE); border-radius: 10px; margin: 10px 0; overflow: hidden; }
+.mailh { display: flex; gap: 10px; align-items: baseline; padding: 9px 12px; background: #F7F6F3; }
+.mailh b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mailc { display: flex; gap: 8px; align-items: center; padding: 9px 12px; border-top: 1px solid #EEECE7; }
+.mailw { flex: 1; min-width: 0; }
+.mwhen { font-weight: 700; margin-right: 6px; font-variant-numeric: tabular-nums; }
+.msnip { margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mailw .tag { font-size: 11px; background: #E6EEFB; color: #2459C9; border-radius: 4px; padding: 1px 5px; margin-right: 6px; }
