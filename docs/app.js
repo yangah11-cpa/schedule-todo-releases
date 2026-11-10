@@ -6,7 +6,8 @@ import { solarToLunar, lunarToSolar, LUNAR_MAX_YEAR } from './lib/lunar.js';
 import { getHolidays } from './lib/holidays.js';
 import { parseQuickAdd } from './lib/recur.js';
 import { solarPayload, lunarTargets, lunarPayload, fromGoogle, timeRange, composeDescription } from './lib/gsync.js';
-import { parseShared } from './lib/mailparse.js';
+import { parseShared, mailCandidates, setKeywords, extractWords, scoreWords, mergeKeywords, keywordsOf, BASE_KEYS, highlightHtml, cleanSubject } from './lib/mailparse.js';
+import { gmailClient, GMAIL_SCOPE, GMAIL } from './lib/gmail.js';
 
 /* ───────────── 공통 ───────────── */
 const $ = (s, r = document) => r.querySelector(s);
@@ -169,6 +170,7 @@ async function signIn(prompt = '') {
           return p?.reject(new Error('캘린더·할 일·앱 데이터 권한을 모두 허용해야 합니다.'));
         }
         token = { v: r.access_token, exp: Date.now() + (r.expires_in - 30) * 1000 };
+        if (store.get('st.gmail')) store.set('st.gmailOk', google.accounts.oauth2.hasGrantedAllScopes(r, GMAIL_SCOPE));
         store.set('st.token', token);
         p?.resolve();
       },
@@ -181,7 +183,7 @@ async function signIn(prompt = '') {
   }
   return new Promise((resolve, reject) => {
     pendingAuth = { resolve, reject };
-    tokenClient.requestAccessToken({ prompt, hint: store.get('st.email') || undefined });
+    tokenClient.requestAccessToken({ prompt, hint: store.get('st.email') || undefined, scope: store.get('st.gmail') ? `${SCOPES} ${GMAIL_SCOPE}` : SCOPES });
   });
 }
 
@@ -393,7 +395,8 @@ async function refreshAll() {
   $('#btnRefresh').classList.add('spin');
   try {
     await loadCalendars();
-    await Promise.all([loadEvents(), loadTasks(), loadTeam()]);
+    await Promise.all([loadEvents(), loadTasks(), loadTeam(), syncKw()]);
+    scanGmail(); // 기다리지 않음 (끝나면 후보 표시)
   } catch (e) {
     if (e.code !== 'auth') toast(`불러오기 실패: ${e.message}`);
   } finally {
@@ -501,6 +504,7 @@ function renderCal() {
       <button type="button" class="nav-btn text" data-nav="0">이번 주</button>
       <button type="button" class="nav-btn" data-nav="1" aria-label="다음 주">›</button>
     </div>
+    ${gmCands().length ? `<button type="button" class="gm-banner" data-gmc>✉ 메일에서 찾은 일정 후보 <b>${gmCands().length}</b>건 ›</button>` : ''}
     <div class="wbox"><div class="hweek" id="weekWrap">`;
   // 머리글: 요일·날짜·음력·휴일 (누르면 그날 새 일정)
   for (const [i, d] of days.entries()) {
@@ -774,7 +778,7 @@ function choose(title, message, options) {
 const ALARMS_ALLDAY = [['', '알림 없음'], ['360', '전날 오후 6시'], ['900', '1일 전 오전 9시'], ['3780', '3일 전 오전 9시'], ['9540', '7일 전 오전 9시']];
 const ALARMS_TIMED = [['', '알림 없음'], ['0', '시작 시각'], ['10', '10분 전'], ['30', '30분 전'], ['60', '1시간 전'], ['1440', '1일 전']];
 
-function openEvent(e = null, date = S.sel, preset = null) {
+function openEvent(e = null, date = S.sel, preset = null, onSaved = null) {
   const writable = S.calendars.filter((c) => c.writable);
   const defCal = store.get('st.defCal');
   const l0 = solarToLunar(e?.date || date) || { month: 1, day: 1, leap: false };
@@ -826,7 +830,7 @@ function openEvent(e = null, date = S.sel, preset = null) {
     const isL = f.calType === 'lunar';
     body.innerHTML = `
       ${readonly ? '<div class="note">읽기 전용 캘린더의 일정입니다.</div>' : ''}
-      ${!e && !preset ? '<button type="button" class="paste-btn" data-paste>📋 카톡·문자 내용 붙여넣어 채우기</button>' : ''}
+      ${!e && !preset ? '<div class="paste-row"><button type="button" class="paste-btn" data-paste>📋 붙여넣어 채우기</button><button type="button" class="paste-btn" data-gmail>✉ Gmail에서 가져오기</button></div>' : ''}
       <div class="fld"><label class="lbl" for="e-title">제목</label><input class="inp" id="e-title" value="${h(f.title)}" ${readonly ? 'disabled' : ''} enterkeyhint="next"></div>
       ${
         isL
@@ -982,6 +986,11 @@ function openEvent(e = null, date = S.sel, preset = null) {
       setTimeout(openPasteSheet, 300);
       return;
     }
+    if (ev.target.closest('[data-gmail]')) {
+      close();
+      setTimeout(openGmailPicker, 300);
+      return;
+    }
     const wb = ev.target.closest('[data-wheel]');
     if (wb && !wb.disabled) {
       const isStart = wb.dataset.wheel === 'st';
@@ -1053,7 +1062,11 @@ function openEvent(e = null, date = S.sel, preset = null) {
     btn.disabled = true;
     try {
       if (e) await updateEvent(e, f);
-      else await createEvent(f);
+      else {
+        await createEvent(f);
+        learnWords(f.title); // 직접 추가한 일정의 핵심 단어 배우기
+      }
+      onSaved?.();
       store.set('st.defCal', f.calendarId);
       const k = normTitle(f.title);
       if (f.place || f.people.length) {
@@ -1137,7 +1150,7 @@ async function toggleTask(id) {
   }
 }
 
-function openTask(t = null, preset = null) {
+function openTask(t = null, preset = null, onSaved = null) {
   const kids = t ? S.tasks.filter((k) => k.parent === t.id && !k.deleted).sort((a, b) => String(a.position).localeCompare(String(b.position))) : [];
   const f = {
     title: t?.title || '',
@@ -1226,6 +1239,8 @@ function openTask(t = null, preset = null) {
       const L = `/lists/${TASK_LIST}/tasks`;
       const main = { title: f.title.trim(), notes: f.notes, due: f.hasDue ? `${f.due}T00:00:00.000Z` : null };
       const r = t ? await tasks(`${L}/${encodeURIComponent(t.id)}`, { method: 'PATCH', body: main }) : await tasks(L, { method: 'POST', body: main });
+      if (!t) learnWords(f.title);
+      onSaved?.();
       let prev = null;
       for (const x of f.subs) {
         const sb = { title: x.title.trim(), status: x.done ? 'completed' : 'needsAction', ...(x.done ? {} : { completed: null }) };
@@ -1340,6 +1355,26 @@ async function openSettings() {
         }
         <div class="note">할 일 알림(그리고 PC에서 선택한 일정 알림)을 PC 프로그램이 이 휴대폰으로 보냅니다. PC가 켜져 있고 프로그램이 실행 중일 때 전달됩니다. 구글 캘린더 일정의 알림은 휴대폰의 구글 캘린더 앱에서도 받을 수 있습니다.</div>
         <span class="note" id="pMsg"></span></div>
+      <div class="sect"><h3>Gmail 일정 찾기</h3>
+        ${
+          store.get('st.gmailOk')
+            ? `<div class="small">연결됨 · 앱을 열거나 새로고침할 때 최근 7일 받은 메일(첨부 포함)에서 일정 후보를 찾습니다.</div>
+               <div class="row2"><button type="button" class="btn" data-gmpick2>메일에서 가져오기</button><button type="button" class="btn danger" data-gmoff>연결 끊기</button></div>`
+            : '<button type="button" class="btn primary" data-gmcon>Gmail 연결</button><div class="note">메일은 이 휴대폰 안에서만 읽습니다 (읽기 전용).</div>'
+        }</div>
+      <div class="sect"><h3>내 일정 단어</h3>
+        <div class="note">직접 저장한 일정·할 일 제목에서 배운 단어입니다. 이 단어가 들어간 메일은 일정 후보로 찾습니다. 후보를 [무시]하면 점수가 깎이고 0점이면 빠집니다. PC와 함께 씁니다.</div>
+        <div class="kw-list">${
+          Object.entries(KW.w || {})
+            .filter(([, v]) => v.s > 0)
+            .sort((a, b) => b[1].s - a[1].s)
+            .map(([w, v]) => `<span class="kw">${h(w)} <small>${+v.s.toFixed(1)}</small><button type="button" data-kwdel="${h(w)}" aria-label="${h(w)} 지우기">×</button></span>`)
+            .join('') || '<span class="xs muted">아직 배운 단어가 없습니다.</span>'
+        }</div>
+        <div class="gm-search"><input class="inp" id="kw-new" placeholder="단어 직접 추가 (예: 조서열람)"><button type="button" class="btn" data-kwadd>추가</button></div>
+        <details class="kw-base"><summary class="small">기본 단어 켜기/끄기</summary><div class="kw-list">${BASE_KEYS.map(
+          ([l]) => `<button type="button" class="kw b ${KW.off?.[l]?.v ? 'off' : ''}" data-kwoff="${h(l)}">${h(l)}</button>`
+        ).join('')}</div></details></div>
       <div class="sect"><h3>표시할 캘린더</h3>
         ${S.calendars
           .map(
@@ -1361,7 +1396,38 @@ async function openSettings() {
   body.addEventListener('click', async (ev) => {
     const msg = () => $('#pMsg', body);
     try {
-      if (ev.target.closest('[data-signout]')) {
+      const kd = ev.target.closest('[data-kwdel]');
+      const ko = ev.target.closest('[data-kwoff]');
+      if (kd) {
+        KW.w[kd.dataset.kwdel] = { s: 0, t: Date.now() };
+        saveKw();
+        await draw();
+      } else if (ev.target.closest('[data-kwadd]')) {
+        const w = $('#kw-new', body).value.trim().replace(/\s+/g, ' ');
+        if (w.length < 2) return toast('두 글자 이상 입력하세요.');
+        KW.w[w] = { s: Math.max(2, KW.w[w]?.s || 0), t: Date.now() };
+        saveKw();
+        await draw();
+      } else if (ko) {
+        KW.off ||= {};
+        const l = ko.dataset.kwoff;
+        KW.off[l] = { v: !KW.off[l]?.v, t: Date.now() };
+        saveKw();
+        await draw();
+        $('.kw-base', body).open = true;
+      } else if (ev.target.closest('[data-gmcon]')) {
+        openGmailConnect(() => draw());
+      } else if (ev.target.closest('[data-gmpick2]')) {
+        openGmailPicker();
+      } else if (ev.target.closest('[data-gmoff]')) {
+        store.set('st.gmail', false);
+        store.set('st.gmailOk', false);
+        GM.cands = [];
+        gmSave();
+        await draw();
+        render();
+        toast('Gmail 연결을 끊었습니다. 다음 로그인부터 Gmail 권한을 요청하지 않습니다.');
+      } else if (ev.target.closest('[data-signout]')) {
         $('#sheetRoot').lastElementChild?._close();
         signOut();
       } else if (ev.target.closest('[data-pon]')) {
@@ -1414,6 +1480,7 @@ function bind() {
         .then(render)
         .catch((er) => toast(er.message));
     }
+    if (e.target.closest('[data-gmc]')) return openGmailCands();
     const day = e.target.closest('[data-day]');
     if (day) {
       S.sel = day.dataset.day;
@@ -1585,11 +1652,11 @@ function cleanOcr(t) {
 }
 
 /** 공유 받은 내용 → 일정 또는 할 일 고르기 */
-function openShareChooser(text, files) {
+function openShareChooser(text, files, opts = {}) {
   const imgs = files.filter((f) => /^image\//.test(f.type));
   const { el, body, close } = openSheet(
-    '공유 받은 내용',
-    `${imgs.length ? `<div class="sh-imgs">${imgs.map((_, i) => `<img data-i="${i}" alt="공유 받은 이미지">`).join('')}</div>` : ''}
+    opts.heading || '공유 받은 내용',
+    `${opts.title !== undefined ? `<div class="small muted" style="margin-bottom:8px">${h(opts.sub || '')}</div><div class="fld"><label class="lbl" for="sh-title">제목</label><input class="inp" id="sh-title" value="${h(opts.title)}"></div>` : ''}${imgs.length ? `<div class="sh-imgs">${imgs.map((_, i) => `<img data-i="${i}" alt="공유 받은 이미지">`).join('')}</div>` : ''}
      <div class="note" id="sh-ocr" ${imgs.length ? '' : 'hidden'}>이미지에서 글자를 읽는 중…</div>
      <div class="fld"><label class="lbl" for="sh-t">내용 (고칠 수 있어요)</label><textarea class="inp" id="sh-t" rows="6">${h(text)}</textarea></div>
      <div class="sh-found" id="sh-found"></div>`,
@@ -1602,7 +1669,7 @@ function openShareChooser(text, files) {
     const d = (x) => `${+x.slice(5, 7)}/${+x.slice(8, 10)}(${'일월화수목금토'[D.dow(x)]})`;
     found.innerHTML = ta.value.trim()
       ? r.found
-        ? `<b>찾은 내용</b> ${h(d(r.date))}${r.endDate !== r.date ? ` ~ ${h(d(r.endDate))}` : ''}${r.startTime ? ` ${h(r.startTime)}${r.endTime ? `~${h(r.endTime)}` : ''}` : ' 종일'}${r.place ? ` · ${h(r.place)}` : ''}<br><span class="muted">제목: ${h(r.title)}</span>`
+        ? `<b>찾은 내용</b> ${h(d(r.date))}${r.endDate !== r.date ? ` ~ ${h(d(r.endDate))}` : ''}${r.startTime ? ` ${h(r.startTime)}${r.endTime ? `~${h(r.endTime)}` : ''}` : ' 종일'}${r.place ? ` · ${h(r.place)}` : ''}${opts.title === undefined ? `<br><span class="muted">제목: ${h(r.title)}</span>` : ''}`
         : '<span class="muted">날짜를 찾지 못했습니다. 다음 화면에서 직접 고르세요.</span>'
       : '';
   };
@@ -1646,15 +1713,17 @@ function openShareChooser(text, files) {
     const t = ta.value.trim();
     if (!t) return toast('내용이 없습니다.');
     const r = parseShared(t, D.today(), nowStamp());
+    if (opts.title !== undefined) r.title = $('#sh-title', body).value.trim() || r.title;
+    if (opts.memoHead) r.memo = `${opts.memoHead}\n${r.memo}`.slice(0, 1500);
     close();
     setTimeout(() => {
       if (b.dataset.mk === 'event') {
         const { found: ok, ...preset } = r;
-        openEvent(null, preset.date, preset);
+        openEvent(null, preset.date, preset, opts.onSaved);
       } else {
         S.tab = 'todo';
         render();
-        openTask(null, { title: r.title, hasDue: r.found, due: r.date, notes: r.memo });
+        openTask(null, { title: r.title, hasDue: r.found, due: r.date, notes: r.memo }, opts.onSaved);
       }
     }, 300);
   });
@@ -1676,6 +1745,311 @@ function openPasteSheet() {
     if (!t) return toast('붙여넣은 내용이 없습니다.');
     close();
     setTimeout(() => openShareChooser(t, []), 300);
+  });
+}
+
+/* ───────────── 내 일정 단어 (배우기 · PC와 공유) ───────────── */
+let KW = store.get('st.kw', { w: {}, off: {} });
+setKeywords(keywordsOf(KW));
+function saveKw() {
+  store.set('st.kw', KW);
+  setKeywords(keywordsOf(KW));
+  clearTimeout(saveKw.t);
+  saveKw.t = setTimeout(() => syncKw(true), 2500);
+}
+async function driveFile(name) {
+  const q = new URLSearchParams({ spaces: 'appDataFolder', q: `name='${name}'`, fields: 'files(id,modifiedTime)' });
+  return (await api(DRIVE, `/files?${q}`)).files?.[0] || null;
+}
+async function driveRead(name) {
+  const f = await driveFile(name);
+  if (!f) return null;
+  const r = await fetch(`${DRIVE}/files/${encodeURIComponent(f.id)}?alt=media`, { headers: { Authorization: `Bearer ${token.v}` } });
+  return r.ok ? r.json() : null;
+}
+async function driveWrite(name, obj) {
+  const f = await driveFile(name);
+  const body = JSON.stringify(obj);
+  const UP = 'https://www.googleapis.com/upload/drive/v3/files';
+  if (f) {
+    await fetch(`${UP}/${encodeURIComponent(f.id)}?uploadType=media`, { method: 'PATCH', headers: { Authorization: `Bearer ${token.v}`, 'Content-Type': 'application/json' }, body });
+    return;
+  }
+  const b = 'stb' + Date.now();
+  const meta = JSON.stringify({ name, parents: ['appDataFolder'], mimeType: 'application/json' });
+  await fetch(`${UP}?uploadType=multipart`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token.v}`, 'Content-Type': `multipart/related; boundary=${b}` },
+    body: `--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${b}\r\nContent-Type: application/json\r\n\r\n${body}\r\n--${b}--`,
+  });
+}
+/** 드라이브의 단어 목록과 합치기 (write=true면 합친 결과를 올림) */
+async function syncKw(write = false) {
+  if (!tokenOk()) return;
+  try {
+    const remote = await driveRead('keywords.json');
+    const merged = mergeKeywords(KW, remote || {});
+    const changed = JSON.stringify(merged) !== JSON.stringify(remote || {});
+    KW = merged;
+    store.set('st.kw', KW);
+    setKeywords(keywordsOf(KW));
+    if (write || changed) await driveWrite('keywords.json', KW);
+  } catch {
+    /* 드라이브 권한이 없거나 오프라인이면 이 휴대폰 안에서만 */
+  }
+}
+/** 직접 저장한 일정·할 일 제목에서 핵심 단어 배우기 (회사 이름 제외) */
+function learnWords(title) {
+  const ex = new Set(Object.keys(S.hist).map((k) => firstToken(k)));
+  const ws = extractWords(title, ex);
+  if (!ws.length) return;
+  scoreWords(KW, ws, +1);
+  saveKw();
+}
+function penalize(words) {
+  if (!words?.length) return;
+  scoreWords(KW, words, -1);
+  saveKw();
+}
+
+/* ───────────── Gmail ───────────── */
+const gm = gmailClient((p) => api(GMAIL, p));
+const GM = { cands: store.get('st.gm.cands', []), seen: store.get('st.gm.seen', {}), done: store.get('st.gm.done', {}) };
+const gmSave = () => {
+  store.set('st.gm.cands', GM.cands);
+  store.set('st.gm.seen', GM.seen);
+  store.set('st.gm.done', GM.done);
+};
+function gmCands() {
+  const today = D.today();
+  return GM.cands.filter((c) => !GM.done[c.key] && (c.endDate || c.date) >= today);
+}
+const whenTxt = (c) => {
+  const d = (x) => `${+x.slice(5, 7)}/${+x.slice(8, 10)}(${'일월화수목금토'[D.dow(x)]})`;
+  return `${d(c.date)}${c.endDate && c.endDate !== c.date ? ` ~ ${d(c.endDate)}` : ''}${c.startTime ? ` ${c.startTime}${c.endTime ? `~${c.endTime}` : ''}` : ''}`;
+};
+/** Gmail 연결 (읽기 전용 권한 추가) */
+async function connectGmail() {
+  store.set('st.gmail', true);
+  try {
+    await signIn('consent');
+  } catch (e) {
+    store.set('st.gmail', !!store.get('st.gmailOk'));
+    throw e;
+  }
+  if (!store.get('st.gmailOk')) {
+    store.set('st.gmail', false);
+    throw new Error('Gmail 읽기 권한이 허용되지 않았습니다. 다시 연결하고 Gmail 항목을 체크해 주세요.');
+  }
+}
+let gmScanning = false;
+/** 받은 메일(최근 7일)에서 일정 후보 찾기 — 앱을 열거나 새로고침할 때 */
+async function scanGmail() {
+  if (!store.get('st.gmailOk') || gmScanning || !tokenOk()) return;
+  gmScanning = true;
+  try {
+    const today = D.today();
+    const ids = await gm.list('in:inbox newer_than:7d -category:promotions -category:social', 40);
+    const now = nowStamp();
+    for (const id of ids) {
+      if (GM.seen[id]) continue;
+      const m = await gm.full(id);
+      const cs = mailCandidates(m, today, now).map((c) => ({
+        key: `g|${c.key}`,
+        title: cleanSubject(m.subject) || '(제목 없음)',
+        date: c.date,
+        endDate: c.endDate,
+        allDay: c.allDay,
+        startTime: c.startTime,
+        endTime: c.endTime,
+        place: c.place,
+        snippet: c.snippet,
+        att: c.att,
+        why: c.why,
+        hits: c.hits,
+        meeting: c.meeting,
+        mailId: id,
+        subject: m.subject,
+        from: m.from,
+        received: m.received,
+      }));
+      GM.seen[id] = Date.now();
+      GM.cands.push(...cs.filter((c) => !GM.done[c.key] && !GM.cands.some((x) => x.key === c.key)));
+    }
+    // 정리: 지난 후보, 오래된 기록
+    const cut = Date.now() - 30 * 864e5;
+    for (const [k, t] of Object.entries(GM.seen)) if (t < cut) delete GM.seen[k];
+    for (const [k, t] of Object.entries(GM.done)) if (t < Date.now() - 90 * 864e5) delete GM.done[k];
+    GM.cands = GM.cands.filter((c) => (c.endDate || c.date) >= today && !GM.done[c.key]);
+    gmSave();
+    if (S.tab === 'cal') render();
+  } catch (e) {
+    if (e.status === 403 && !(e.why === 'SERVICE_DISABLED' || e.why === 'accessNotConfigured')) store.set('st.gmailOk', false);
+    if (e.status === 403) toast(gmErr(e));
+  } finally {
+    gmScanning = false;
+  }
+}
+const gmErr = (e) =>
+  e.why === 'SERVICE_DISABLED' || e.why === 'accessNotConfigured'
+    ? 'Gmail API가 꺼져 있습니다. Google Cloud 콘솔에서 Gmail API를 "사용"으로 켜 주세요. (켠 뒤 몇 분 걸릴 수 있음)'
+    : e.status === 403
+      ? 'Gmail 읽기 권한이 없습니다. 설정에서 Gmail을 다시 연결해 주세요.'
+      : e.message;
+/** 메일 본문 + 첨부 글자 */
+const mailText = (m) => [m.body || '', ...(m.attText || []).map((a) => `[첨부: ${a.name}]\n${a.text}`)].join('\n\n').trim();
+const mailMemo = (m) => `메일: ${m.subject || ''}\n보낸 사람: ${m.from || ''} (${(m.received || '').slice(0, 16).replace('T', ' ')})`;
+
+/** 메일 하나 → 일정/할 일 고르기 */
+async function openMailChooser(id, onSaved) {
+  toast('메일을 불러오는 중…');
+  try {
+    const m = await gm.full(id);
+    openShareChooser(mailText(m), [], {
+      heading: '메일로 일정·할 일',
+      title: cleanSubject(m.subject) || '(제목 없음)',
+      sub: `${m.from} · ${(m.received || '').slice(5, 16).replace('T', ' ').replace('-', '/')}${m.attText?.length ? ` · 📎 ${m.attText.length}개 읽음` : ''}`,
+      memoHead: mailMemo(m),
+      onSaved,
+    });
+  } catch (e) {
+    toast(`메일을 불러오지 못했습니다: ${gmErr(e)}`);
+  }
+}
+
+/** Gmail 연결 안내 화면 */
+function openGmailConnect(after) {
+  const { el, close } = openSheet(
+    'Gmail 연결',
+    `<div class="note" style="font-size:14px;line-height:1.6">Gmail의 받은 메일에서 일정을 가져오려면 <b>Gmail 읽기 권한</b>이 필요합니다.<br><br>
+      · 메일은 이 휴대폰 안에서만 읽고 어디로도 보내지 않습니다.<br>
+      · 읽기 전용이라 메일을 지우거나 보내지 않습니다.<br>
+      · 로그인 중 "Google에서 확인하지 않은 앱" 화면이 나오면 <b>고급 → 일정&할일(으)로 이동</b>을 누르고, Gmail 항목을 체크해 주세요.</div>`,
+    `<button type="button" class="btn primary" data-gmgo style="flex:1">Gmail 연결</button>`
+  );
+  el.addEventListener('click', async (e) => {
+    if (!e.target.closest('[data-gmgo]')) return;
+    try {
+      await connectGmail();
+      close();
+      toast('Gmail을 연결했습니다.');
+      scanGmail();
+      setTimeout(() => after?.(), 300);
+    } catch (er) {
+      toast(er.message);
+    }
+  });
+}
+
+/** ✉ Gmail에서 가져오기: 최근 메일 목록·검색 → 고르기 */
+function openGmailPicker() {
+  if (!store.get('st.gmailOk')) return openGmailConnect(openGmailPicker);
+  const { el, body } = openSheet(
+    'Gmail에서 가져오기',
+    `<div class="gm-search"><input class="inp" id="gm-q" type="search" placeholder="검색 (보낸 사람, 제목, 단어)" enterkeyhint="search"><button type="button" class="btn" data-gms>검색</button></div>
+     <div id="gm-list"><div class="note">불러오는 중…</div></div>`,
+    ''
+  );
+  const listEl = $('#gm-list', body);
+  const load = async (q) => {
+    listEl.innerHTML = '<div class="note">불러오는 중…</div>';
+    try {
+      const ids = await gm.list(q ? `${q}` : 'in:inbox', 25);
+      if (!ids.length) {
+        listEl.innerHTML = '<div class="empty small">메일이 없습니다.</div>';
+        return;
+      }
+      const heads = [];
+      for (let i = 0; i < ids.length; i += 8) heads.push(...(await Promise.all(ids.slice(i, i + 8).map((id) => gm.head(id).catch(() => null)))));
+      const cset = new Set(gmCands().map((c) => c.mailId));
+      listEl.innerHTML = heads
+        .filter(Boolean)
+        .map(
+          (m) => `<button type="button" class="gm-row" data-gmid="${h(m.id)}">
+            <span class="gm-top"><b class="${m.unread ? 'unread' : ''}">${h(m.from || '')}</b><span class="xs muted">${h((m.received || '').slice(5, 10).replace('-', '/'))}</span></span>
+            <span class="gm-sub">${cset.has(m.id) ? '<i class="gm-dot">일정 후보</i>' : ''}${m.hasAtt ? '📎 ' : ''}${h(m.subject || '(제목 없음)')}</span>
+            <span class="xs muted gm-snip">${h(m.snippet || '')}</span></button>`
+        )
+        .join('');
+    } catch (e) {
+      listEl.innerHTML = `<div class="note warn">${h(gmErr(e))}</div>`;
+    }
+  };
+  load('');
+  el.addEventListener('click', (e) => {
+    if (e.target.closest('[data-gms]')) return load($('#gm-q', body).value.trim());
+    const r = e.target.closest('[data-gmid]');
+    if (r) openMailChooser(r.dataset.gmid);
+  });
+  $('#gm-q', body).addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      load(e.target.value.trim());
+    }
+  });
+}
+
+/** 메일에서 찾은 일정 후보 목록 */
+function openGmailCands() {
+  const { el, body } = openSheet('메일 일정 후보', '', `<button type="button" class="btn" data-gmpick style="flex:1">✉ 다른 메일에서 가져오기</button>`);
+  const draw = () => {
+    const cs = gmCands();
+    body.innerHTML = cs.length
+      ? cs
+          .map(
+            (c) => `<div class="gmc">
+              <div class="gmc-h"><b>${h(whenTxt(c))}</b>${c.allDay && !c.startTime ? ' <span class="xs muted">종일</span>' : ''}${c.place ? `<span class="xs muted"> · ${h(c.place)}</span>` : ''}</div>
+              <div class="gmc-t">${h(c.title)}</div>
+              <div class="xs muted">${h(c.from || '')} · ${h((c.received || '').slice(5, 10).replace('-', '/'))}${c.att ? ` · 📎 ${h(c.att)}` : ''}</div>
+              ${c.snippet && !c.meeting ? `<div class="gmc-s">${highlightHtml(c.snippet, c.hits, h)}</div>` : ''}
+              ${c.why?.length ? `<div class="xs muted">배운 단어로 찾음: ${h(c.why.join(', '))}</div>` : ''}
+              <div class="gmc-b"><button type="button" class="btn" data-gmx="${h(c.key)}">무시</button><button type="button" class="btn" data-gmv="${h(c.key)}">메일 보기</button><button type="button" class="btn primary" data-gma="${h(c.key)}">일정 추가</button></div>
+            </div>`
+          )
+          .join('')
+      : '<div class="empty small">새 일정 후보가 없습니다.</div>';
+  };
+  draw();
+  const done = (key) => {
+    GM.done[key] = Date.now();
+    GM.cands = GM.cands.filter((c) => c.key !== key);
+    gmSave();
+    draw();
+    render();
+  };
+  el.addEventListener('click', (e) => {
+    if (e.target.closest('[data-gmpick]')) return openGmailPicker();
+    const x = e.target.closest('[data-gmx]');
+    if (x) {
+      const c = GM.cands.find((y) => y.key === x.dataset.gmx);
+      penalize(c?.why); // 배운 단어 때문에 잡힌 후보면 그 단어 점수를 나눠 깎음
+      return done(x.dataset.gmx);
+    }
+    const v = e.target.closest('[data-gmv]');
+    if (v) {
+      const c = GM.cands.find((y) => y.key === v.dataset.gmv);
+      return c && openMailChooser(c.mailId, () => done(c.key));
+    }
+    const a = e.target.closest('[data-gma]');
+    if (a) {
+      const c = GM.cands.find((y) => y.key === a.dataset.gma);
+      if (!c) return;
+      openEvent(
+        null,
+        c.date,
+        {
+          title: c.title,
+          date: c.date,
+          endDate: c.endDate || c.date,
+          allDay: c.allDay,
+          startTime: c.startTime || '09:00',
+          endTime: c.endTime || autoEnd(c.startTime || '09:00'),
+          place: c.place || '',
+          memo: `메일: ${c.subject || ''}\n보낸 사람: ${c.from || ''} (${(c.received || '').slice(0, 16).replace('T', ' ')})${c.snippet && !c.meeting ? `\n${c.snippet}` : ''}`,
+        },
+        () => done(c.key)
+      );
+    }
   });
 }
 

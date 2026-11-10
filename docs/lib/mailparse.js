@@ -2,7 +2,90 @@
 import { addDays, dow, make, parts, daysInMonth } from './dates.js';
 
 const DOW = { 일: 0, 월: 1, 화: 2, 수: 3, 목: 4, 금: 5, 토: 6 };
-const KEY = /회의|미팅|meeting|방문|실사|감사(?!합니|드립|드려|해요|하다|했습|의 말)|일정|면담|인터뷰|교육|세미나|워크숍|설명회|마감|제출|기한|까지|약속|참석|일시|예정|진행|통화|콜|점심|저녁|식사|만찬|발표|보고|입회|킥오프|kick|착수|종료|평가|심사|강의|행사|모임|출장|열람|희망일|예정일|요청일|기일|기한일|일자|개최|소집|주총|주주총회|이사회|신고|납부|만기|방문일|실사일|입회일|회신\s*요청|회의일|방문\s*예정|미팅일|일정\s*확인|일정\s*조율|가능\s*(?:하신|할까|여부)|어떠세요|어떠신지|괜찮으신지/i;
+// 기본 일정 단어 [표시 이름, 정규식(없으면 이름 그대로)]
+export const BASE_KEYS = [
+  ['회의'], ['미팅'], ['meeting'], ['방문'], ['실사'], ['감사', '감사(?!합니|드립|드려|해요|하다|했습|의 말)'], ['일정'], ['면담'], ['인터뷰'],
+  ['교육'], ['세미나'], ['워크숍'], ['설명회'], ['마감'], ['제출'], ['기한'], ['까지'], ['약속'], ['참석'], ['일시'], ['예정'], ['진행'],
+  ['통화'], ['콜'], ['점심'], ['저녁'], ['식사'], ['만찬'], ['발표'], ['보고'], ['입회'], ['킥오프'], ['kick'], ['착수'], ['종료'], ['평가'],
+  ['심사'], ['강의'], ['행사'], ['모임'], ['출장'], ['열람'], ['희망일'], ['예정일'], ['요청일'], ['기일'], ['기한일'], ['일자'], ['개최'],
+  ['소집'], ['주총'], ['주주총회'], ['이사회'], ['신고'], ['납부'], ['만기'], ['방문일'], ['실사일'], ['입회일'], ['회신 요청', '회신\\s*요청'],
+  ['회의일'], ['방문 예정', '방문\\s*예정'], ['미팅일'], ['일정 확인', '일정\\s*확인'], ['일정 조율', '일정\\s*조율'],
+  ['가능 여부', '가능\\s*(?:하신|할까|여부)'], ['어떠세요'], ['어떠신지'], ['괜찮으신지'],
+];
+const escRe = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s*');
+let OFF = new Set();
+let LEARNED = [];
+let LSCORE = {};
+let BASE_RE = /(?!)/;
+let LEARN_RE = null;
+let KEY = /(?!)/;
+function buildKeys() {
+  const base = BASE_KEYS.filter(([l]) => !OFF.has(l)).map(([l, src]) => src || escRe(l));
+  BASE_RE = base.length ? new RegExp(base.join('|'), 'i') : /(?!)/;
+  LEARN_RE = LEARNED.length ? new RegExp(LEARNED.map(escRe).join('|'), 'gi') : null;
+  const all = base.concat(LEARNED.map(escRe));
+  KEY = all.length ? new RegExp(all.join('|'), 'i') : /(?!)/;
+}
+buildKeys();
+/** 꺼 둔 기본 단어 + 배운 단어 적용 */
+export function setKeywords({ off = [], learned = {} } = {}) {
+  OFF = new Set(off);
+  // learned: { 단어: 점수 } (배열이면 모두 1점)
+  LSCORE = Array.isArray(learned) ? Object.fromEntries(learned.map((w) => [w, 1])) : { ...learned };
+  LEARNED = Object.keys(LSCORE).filter((w) => w && w.length >= 2 && LSCORE[w] > 0);
+  buildKeys();
+}
+const learnedIn = (str) => (LEARN_RE ? [...new Set([...String(str).matchAll(LEARN_RE)].map((m) => m[0].replace(/\s+/g, '')))] : []);
+
+/* ───────── 내 일정 단어 배우기 ───────── */
+const STOP = new Set(
+  '안내 요청 신청 신청서 공문 협조 검토 결과 계약 견적 제안 보고서 첨부파일 정리 작성 수정 변경 추가 최종 초안 회계사님 님께 귀하 담당자 안내 요청 관련 송부 회신 확인 부탁 드립니다 드림 전달 공유 자료 문의 건 및 등 예정 진행 관련하여 대한 위한 오늘 내일 모레 이번 다음 주간 오전 오후 시간 날짜 일정 회의 미팅 메일 첨부 파일 참고 내용 사항 the and for re fw fwd'.split(' ')
+);
+/** 제목 → 배울 만한 단어 (조사·흔한 말·숫자·회사 이름 제외) */
+export function extractWords(title, exclude = new Set()) {
+  const out = [];
+  for (let w of String(title || '').split(/[^가-힣A-Za-z0-9]+/)) {
+    w = w.replace(/(?:으로|에서|에게|까지|부터|이랑|하고|은|는|이|가|을|를|의|에|와|과|도|로|랑)$/, '');
+    if (w.length < 2 || w.length > 12) continue;
+    if (/^\d+$/.test(w) || /^\d+(?:월|일|시|분|년|차|층|호)$/.test(w)) continue;
+    if (STOP.has(w.toLowerCase()) || exclude.has(w)) continue;
+    if (BASE_KEYS.some(([l]) => l === w)) continue; // 이미 기본 단어
+    out.push(w);
+  }
+  return [...new Set(out)].slice(0, 4);
+}
+/**
+ * 단어 점수 저장소: { w: { 단어: { s: 점수, t: 시각 } }, off: { 기본단어: { v: true/false, t } } }
+ * 저장하면 +1(최대 5), 무시하면 -1, 0 이하는 목록에서 빠짐
+ */
+export function scoreWords(store, words, delta) {
+  store.w ||= {};
+  const now = Date.now();
+  const list = [...new Set(words)].filter(Boolean);
+  // 무시(-)는 1점을 원인 단어 수로 나눠서 깎는다
+  const d = delta < 0 && list.length ? delta / list.length : delta;
+  for (const w of list) {
+    const cur = store.w[w]?.s || 0;
+    if (d < 0 && cur <= 0) continue;
+    const s = Math.round(Math.max(0, Math.min(5, cur + d)) * 100) / 100;
+    store.w[w] = { s, t: now };
+  }
+  return store;
+}
+/** PC·휴대폰 목록 합치기 (단어별로 나중에 바뀐 쪽) */
+export function mergeKeywords(a = {}, b = {}) {
+  const out = { w: { ...(a.w || {}) }, off: { ...(a.off || {}) } };
+  for (const [k, v] of Object.entries(b.w || {})) if (!out.w[k] || (v.t || 0) > (out.w[k].t || 0)) out.w[k] = v;
+  for (const [k, v] of Object.entries(b.off || {})) if (!out.off[k] || (v.t || 0) > (out.off[k].t || 0)) out.off[k] = v;
+  return out;
+}
+/** 저장소 → setKeywords 입력 */
+export function keywordsOf(store = {}) {
+  return {
+    learned: Object.fromEntries(Object.entries(store.w || {}).filter(([, v]) => v.s > 0).map(([k, v]) => [k, v.s])),
+    off: Object.entries(store.off || {}).filter(([, v]) => v.v).map(([k]) => k),
+  };
+}
 
 /** 제목 정리: RE:/FW:/회신:/전달:/[외부] 등 제거 */
 export function cleanSubject(s) {
@@ -237,7 +320,12 @@ export function mailCandidates(mail, today, now = null) {
     // 시간도 없고 일정 관련 단어도 없으면 단순 언급으로 보고 건너뜀
     const labeled = /[가-힣]{1,8}일\s*(?:은|는|이|:|：)\s*$/.test(text.slice(ls, d.idx)); // 예) 열람희망일은 11월 30일
     const attNames = [].concat(mail.atts || []).join(' ');
-    if (!t && !labeled && !KEY.test(line) && !KEY.test(subject) && !KEY.test(attNames)) continue;
+    const ctx = `${line}\n${subject}\n${attNames}`;
+    const baseOk = t || labeled || BASE_RE.test(ctx);
+    // 배운 단어 점수 합이 1 이상이면 후보 (기본 단어·시간 없이 배운 단어 때문에만 잡힌 경우 그 단어들을 기록 → 무시하면 점수 나눠 깎음)
+    const found = baseOk ? [] : learnedIn(ctx);
+    const why = found.filter((w) => (LSCORE[w] || 0) > 0);
+    if (!baseOk && why.reduce((a, w) => a + (LSCORE[w] || 0), 0) < 1) continue;
     // 일정으로 잡은 근거(날짜·시간·일정 단어·장소) — 미리보기에서 강조
     const hits = [{ t: text.slice(d.idx, d.idx + d.len).trim(), k: 'date' }];
     if (t?.raw) hits.push({ t: t.raw, k: 'time' });
@@ -253,6 +341,7 @@ export function mailCandidates(mail, today, now = null) {
       place,
       snippet: line.trim().replace(/\s{2,}/g, ' ').slice(0, 120),
       att: attAt(d.idx),
+      why,
     };
     const k = key(c);
     if (cands.some((x) => x.key === k)) continue;

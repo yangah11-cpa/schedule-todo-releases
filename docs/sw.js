@@ -1,5 +1,5 @@
 // 서비스 워커: 오프라인 실행(앱 파일 캐시), 자동 업데이트, 푸시 알림
-const CACHE = 'st-pwa-v13';
+const CACHE = 'st-pwa-v14';
 const SHELL = [
   './',
   './index.html',
@@ -13,6 +13,8 @@ const SHELL = [
   './lib/recur.js',
   './lib/gsync.js',
   './lib/mailparse.js',
+  './lib/gmail.js',
+  './lib/attext.js',
   './vendor/korean-lunar-calendar.mjs',
   './icons/icon-192.png',
   './icons/badge-96.png',

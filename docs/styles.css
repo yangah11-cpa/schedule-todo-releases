@@ -306,3 +306,34 @@ textarea.inp { height: auto; min-height: 84px; padding: 10px 12px; resize: verti
 .sh-found { margin-top: 10px; padding: 10px 12px; background: var(--soft, #F3F6FC); border-radius: 12px; font-size: 14px; line-height: 1.5; }
 .sh-found:empty { display: none; }
 #sh-ocr { margin-bottom: 8px; color: var(--accent-d); }
+/* Gmail · 내 일정 단어 */
+.paste-row { display: flex; gap: 8px; }
+.paste-row .paste-btn { flex: 1; font-size: 13.5px; }
+#viewCal > .gm-banner { flex: 0 0 auto; margin: 0 8px 6px; height: 38px; border: 0; border-radius: 10px; background: #FFF4D6; color: #6B4E00; font-size: 14px; font-weight: 600; text-align: left; padding: 0 14px; }
+.gm-search { display: flex; gap: 8px; margin: 4px 0 10px; }
+.gm-search .inp { flex: 1; min-width: 0; }
+.gm-row { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line); background: none; padding: 10px 2px; }
+.gm-top { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
+.gm-top b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gm-top b.unread { font-weight: 700; }
+.gm-sub { display: block; font-size: 14px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gm-snip { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+.gm-dot { font-style: normal; font-size: 11px; background: #FFF0B3; color: #6B4E00; border-radius: 4px; padding: 1px 5px; margin-right: 5px; }
+.gmc { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-bottom: 10px; }
+.gmc-h { font-size: 15px; }
+.gmc-t { font-size: 14.5px; margin: 2px 0; }
+.gmc-s { font-size: 13px; margin-top: 4px; color: var(--ink2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gmc-s mark { border-radius: 3px; padding: 0 2px; color: inherit; }
+.gmc-b { display: flex; gap: 6px; margin-top: 8px; }
+.gmc-b .btn { flex: 1; height: 38px; font-size: 13.5px; padding: 0 6px; }
+mark.hl-date { background: #FFE58A; }
+mark.hl-time { background: #FFD3A6; }
+mark.hl-key { background: #D6E4FF; }
+mark.hl-place { background: #CDEFD6; }
+.kw-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.kw { display: inline-flex; align-items: center; gap: 4px; background: #E6EEFB; color: #2459C9; border-radius: 14px; padding: 4px 6px 4px 10px; font-size: 13px; border: 0; }
+.kw small { opacity: 0.7; }
+.kw button { border: 0; background: none; color: inherit; font-size: 15px; padding: 0 4px; }
+.kw.b { padding: 4px 10px; background: #EEECE7; color: #3D3A35; }
+.kw.b.off { text-decoration: line-through; opacity: 0.5; }
+.kw-base summary { cursor: pointer; margin-top: 4px; }
