@@ -3196,7 +3196,7 @@ async function init() {
 
   renderMailBadge();
   setTimeout(() => mailState().enabled && scanMail(), 20000); // 시작 20초 뒤 첫 확인
-  setInterval(() => mailState().enabled && scanMail(), 10 * 60 * 1000); // 10분마다
+  setInterval(() => mailState().enabled && scanMail(), 30 * 60 * 1000); // 30분마다
 
   let lastDay = D.today();
   setInterval(() => {
@@ -3315,7 +3315,7 @@ function openMailDialog() {
     `<div class="mhead"><h1>메일 일정 후보</h1><button type="button" class="btn ghost icon" data-x aria-label="닫기">✕</button></div>
      <div class="mbody" id="mailBody"></div>
      <div class="mfoot">
-       <label class="checkline small"><input type="checkbox" id="mail-auto" ${m.enabled ? 'checked' : ''}>10분마다 자동 확인</label>
+       <label class="checkline small"><input type="checkbox" id="mail-auto" ${m.enabled ? 'checked' : ''}>30분마다 자동 확인</label>
        <select class="inp small" id="mail-days" style="width:auto;height:32px">${[3, 7, 14, 30].map((d) => `<option value="${d}" ${m.days === d ? 'selected' : ''}>최근 ${d}일</option>`).join('')}</select>
        <div class="spacer"></div>
        <button type="button" class="btn" data-scan>지금 확인</button>
