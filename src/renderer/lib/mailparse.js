@@ -279,4 +279,50 @@ export function highlightHtml(text, hits, esc) {
   return out + esc(text.slice(last));
 }
 
+/**
+ * 휴대폰에서 공유한 글(카톡·문자·통화 요약 등) → 새 일정에 채울 값
+ * 사용자가 직접 보낸 글이므로 일정 단어가 없어도 날짜가 있으면 쓴다.
+ */
+export function parseShared(raw, today, now) {
+  let text = String(raw || '').replace(/\r/g, '');
+  // 카톡 대화 내보내기: "[이름] [오후 3:21] 내용" 의 앞부분(보낸 시각)과 날짜 구분선은 일정이 아님
+  text = text
+    .replace(/^-{3,}\s*\d{4}년.*-{3,}\s*$/gm, '')
+    .replace(/^\[[^\]\n]{1,30}\]\s*\[(?:오전|오후)\s*\d{1,2}:\d{2}\]\s*/gm, '')
+    .replace(/^\d{4}\.\s*\d{1,2}\.\s*\d{1,2}\.?\s*(?:오전|오후)\s*\d{1,2}:\d{2},\s*[^:\n]{1,30}\s*:\s*/gm, '')
+    .trim();
+  const first = text.split('\n').map((l) => l.trim()).find(Boolean) || '';
+  let c = mailCandidates({ id: 'share', subject: '', received: now, body: text }, today, now)[0];
+  if (!c) {
+    const d = findDates(text, today).find((x) => (x.endDate || x.date) >= today);
+    if (d) c = { date: d.date, endDate: d.endDate || d.date, allDay: true, startTime: null, endTime: null, hits: [{ t: text.slice(d.idx, d.idx + d.len) }], snippet: first };
+  }
+  const place = c?.place || findPlace(text);
+  // 제목: 날짜가 있던 줄에서 날짜·시간 표현을 뺀 나머지
+  let title = c?.snippet || first;
+  for (const x of c?.hits || []) if (x.k !== 'key' && x.k !== 'place' && x.t) title = title.split(x.t).join(' ');
+  title = title
+    .replace(/^[\s\-*•·▶■□◎○●※:：,]+|[\s,.]+$/g, '')
+    .replace(/^(?:은|는|에|에는)\s+/, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+    .replace(/\s*(?:입니다|이에요|예요|입니당|이요|입니다요)\s*[.!]*$/, '')
+    .replace(/(?:은|는|이|가|:|：)\s*$/, '')
+    .replace(/\s*(?:은|는)\s+(?=\S*$)/, ' ')
+    .trim();
+  if (title.length < 2) title = first;
+  if (title.length > 40) title = `${title.slice(0, 40)}…`;
+  return {
+    found: !!c,
+    title,
+    date: c?.date || today,
+    endDate: c?.endDate || c?.date || today,
+    allDay: c ? c.allDay : true,
+    startTime: c?.startTime || null,
+    endTime: c?.endTime || null,
+    place: place || '',
+    memo: text.slice(0, 1500),
+  };
+}
+
 export const _test = { findDates, findTime, findPlace };

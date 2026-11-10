@@ -6,6 +6,7 @@ import { solarToLunar, lunarToSolar, LUNAR_MAX_YEAR } from './lib/lunar.js';
 import { getHolidays } from './lib/holidays.js';
 import { parseQuickAdd } from './lib/recur.js';
 import { solarPayload, lunarTargets, lunarPayload, fromGoogle, timeRange, composeDescription } from './lib/gsync.js';
+import { parseShared } from './lib/mailparse.js';
 
 /* ───────────── 공통 ───────────── */
 const $ = (s, r = document) => r.querySelector(s);
@@ -267,6 +268,7 @@ async function afterLogin() {
     /* 무시 */
   }
   await refreshAll();
+  maybeOpenShare();
 }
 
 /* ───────────── 데이터 불러오기 ───────────── */
@@ -772,7 +774,7 @@ function choose(title, message, options) {
 const ALARMS_ALLDAY = [['', '알림 없음'], ['360', '전날 오후 6시'], ['900', '1일 전 오전 9시'], ['3780', '3일 전 오전 9시'], ['9540', '7일 전 오전 9시']];
 const ALARMS_TIMED = [['', '알림 없음'], ['0', '시작 시각'], ['10', '10분 전'], ['30', '30분 전'], ['60', '1시간 전'], ['1440', '1일 전']];
 
-function openEvent(e = null, date = S.sel) {
+function openEvent(e = null, date = S.sel, preset = null) {
   const writable = S.calendars.filter((c) => c.writable);
   const defCal = store.get('st.defCal');
   const l0 = solarToLunar(e?.date || date) || { month: 1, day: 1, leap: false };
@@ -795,6 +797,12 @@ function openEvent(e = null, date = S.sel) {
     calendarId: e?.calendarId || (writable.some((c) => c.id === defCal) ? defCal : writable.find((c) => c.primary)?.id || writable[0]?.id),
   };
   const auto = { on: !e, placeTouched: false, peopleTouched: false, filledPlace: false, filledPeople: false, from: null };
+  if (preset && !e) {
+    Object.assign(f, preset);
+    if (!f.startTime) f.startTime = '09:00';
+    if (!f.endTime) f.endTime = autoEnd(f.startTime);
+    if (preset.place) auto.placeTouched = true;
+  }
   const readonly = e && !e.writable;
   const recurring = e && (e.recurringEventId || e.lunarSeries);
   const sel = (opts, v) => opts.map(([k, t]) => `<option value="${k}" ${String(v) === k ? 'selected' : ''}>${h(t)}</option>`).join('');
@@ -818,6 +826,7 @@ function openEvent(e = null, date = S.sel) {
     const isL = f.calType === 'lunar';
     body.innerHTML = `
       ${readonly ? '<div class="note">읽기 전용 캘린더의 일정입니다.</div>' : ''}
+      ${!e && !preset ? '<button type="button" class="paste-btn" data-paste>📋 카톡·문자 내용 붙여넣어 채우기</button>' : ''}
       <div class="fld"><label class="lbl" for="e-title">제목</label><input class="inp" id="e-title" value="${h(f.title)}" ${readonly ? 'disabled' : ''} enterkeyhint="next"></div>
       ${
         isL
@@ -968,6 +977,11 @@ function openEvent(e = null, date = S.sel) {
     if (ev.target.id === 'e-people' && ev.target.value.trim()) addPerson();
   });
   body.addEventListener('click', (ev) => {
+    if (ev.target.closest('[data-paste]')) {
+      close();
+      setTimeout(openPasteSheet, 300);
+      return;
+    }
     const wb = ev.target.closest('[data-wheel]');
     if (wb && !wb.disabled) {
       const isStart = wb.dataset.wheel === 'st';
@@ -1473,6 +1487,74 @@ function bind() {
   });
 }
 
+/* ───────────── 공유로 받은 글 → 새 일정 ───────────── */
+function autoEnd(t) {
+  const [hh, mm] = String(t || '09:00').split(':').map(Number);
+  const v = Math.min(hh * 60 + mm + 60, 23 * 60 + 59);
+  return `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`;
+}
+function nowStamp() {
+  const d = new Date();
+  return `${D.today()}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+/** 글에서 날짜·시간·장소를 찾아 새 일정 창을 연다 */
+function openEventFromText(text) {
+  const r = parseShared(text, D.today(), nowStamp());
+  const { found, ...preset } = r;
+  openEvent(null, preset.date, preset);
+  toast(found ? '글에서 찾은 날짜·시간을 채웠습니다. 확인 후 저장하세요.' : '날짜를 찾지 못해 오늘로 채웠습니다. 날짜를 골라 주세요.');
+}
+(() => {
+  const sp = new URLSearchParams(location.search);
+  const shared = [sp.get('title'), sp.get('text'), sp.get('url')].filter(Boolean).join('\n').trim();
+  if (shared) {
+    try {
+      sessionStorage.setItem('st.share', shared);
+    } catch {
+      S.pendingShare = shared;
+    }
+    history.replaceState(null, '', location.pathname);
+  }
+})();
+function takeShare() {
+  let t = S.pendingShare || null;
+  S.pendingShare = null;
+  try {
+    t = t || sessionStorage.getItem('st.share');
+    sessionStorage.removeItem('st.share');
+  } catch {
+    /* 무시 */
+  }
+  return t;
+}
+async function maybeOpenShare() {
+  const t = takeShare();
+  if (!t) return;
+  if (S.tab !== 'cal') {
+    S.tab = 'cal';
+    render();
+  }
+  openEventFromText(t);
+}
+/** 붙여넣기로 일정 만들기 */
+function openPasteSheet() {
+  const { el, body, close } = openSheet(
+    '붙여넣어 일정 만들기',
+    `<div class="fld"><label class="lbl" for="paste-t">카톡·문자·통화 요약 등의 내용</label>
+       <textarea class="inp" id="paste-t" rows="7" placeholder="여기에 길게 눌러 붙여넣기"></textarea></div>
+     <div class="note" style="margin-top:8px">날짜·시간·장소를 찾아 새 일정 창에 채웁니다. 내용은 휴대폰 안에서만 처리합니다.</div>`,
+    `<button type="button" class="btn primary" data-pgo style="flex:1">일정 만들기</button>`
+  );
+  setTimeout(() => $('#paste-t', body)?.focus(), 250);
+  el.addEventListener('click', (e) => {
+    if (!e.target.closest('[data-pgo]')) return;
+    const t = $('#paste-t', body).value.trim();
+    if (!t) return toast('붙여넣은 내용이 없습니다.');
+    close();
+    setTimeout(() => openEventFromText(t), 300);
+  });
+}
+
 /* ───────────── 시작 ───────────── */
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
@@ -1481,5 +1563,5 @@ bind();
 render();
 if (tokenOk()) {
   S.lastRefresh = Date.now();
-  refreshAll();
+  refreshAll().then(maybeOpenShare, maybeOpenShare);
 } else showGate(store.get('st.signedOnce') ? 'expired' : undefined);

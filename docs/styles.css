@@ -300,3 +300,4 @@ textarea.inp { height: auto; min-height: 84px; padding: 10px 12px; resize: verti
 .wband { position: absolute; left: 12%; right: 12%; top: 96px; height: 48px; border-top: 1px solid #DCDCE0; border-bottom: 1px solid #DCDCE0; pointer-events: none; }
 .wheel-f { display: flex; gap: 10px; margin-top: 10px; }
 .wheel-f .btn { flex: 1; height: 48px; font-size: 16px; }
+.paste-btn { width: 100%; border: 1px dashed var(--line2); background: var(--soft, #F3F6FC); color: var(--accent-d); border-radius: 12px; height: 42px; font-size: 14px; font-weight: 600; margin-bottom: 12px; }

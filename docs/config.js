@@ -3,4 +3,4 @@
 export const CLIENT_ID = '1047657332025-uegstqpk9hqacn65p9h89tscjh68acg4.apps.googleusercontent.com';
 
 // 앱 버전: 바뀌면 서비스 워커가 새 파일을 받아 자동으로 업데이트된다.
-export const VERSION = '1.2.7';
+export const VERSION = '1.3.0';
