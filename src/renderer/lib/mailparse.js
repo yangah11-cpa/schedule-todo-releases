@@ -2,7 +2,7 @@
 import { addDays, dow, make, parts, daysInMonth } from './dates.js';
 
 const DOW = { 일: 0, 월: 1, 화: 2, 수: 3, 목: 4, 금: 5, 토: 6 };
-const KEY = /회의|미팅|meeting|방문|실사|감사(?!합니|드립|드려|해요|하다|했습|의 말)|일정|면담|인터뷰|교육|세미나|워크숍|설명회|마감|제출|기한|까지|약속|참석|일시|예정|진행|통화|콜|점심|저녁|식사|만찬|발표|보고|입회|킥오프|kick|착수|종료|평가|심사|강의|행사|모임|출장/i;
+const KEY = /회의|미팅|meeting|방문|실사|감사(?!합니|드립|드려|해요|하다|했습|의 말)|일정|면담|인터뷰|교육|세미나|워크숍|설명회|마감|제출|기한|까지|약속|참석|일시|예정|진행|통화|콜|점심|저녁|식사|만찬|발표|보고|입회|킥오프|kick|착수|종료|평가|심사|강의|행사|모임|출장|열람|희망일|예정일|요청일|기일|기한일|일자|개최|소집|주총|주주총회|이사회|신고|납부|만기|방문일|실사일|입회일|회신\s*요청|회의일|방문\s*예정|미팅일|일정\s*확인|일정\s*조율|가능\s*(?:하신|할까|여부)|어떠세요|어떠신지|괜찮으신지/i;
 
 /** 제목 정리: RE:/FW:/회신:/전달:/[외부] 등 제거 */
 export function cleanSubject(s) {
@@ -226,7 +226,9 @@ export function mailCandidates(mail, today, now = null) {
       if (recv && at <= recv) continue; // 메일 받기 전 시각 = 지난 일을 적은 것
     }
     // 시간도 없고 일정 관련 단어도 없으면 단순 언급으로 보고 건너뜀
-    if (!t && !KEY.test(line) && !KEY.test(subject)) continue;
+    const labeled = /[가-힣]{1,8}일\s*(?:은|는|이|:|：)\s*$/.test(text.slice(ls, d.idx)); // 예) 열람희망일은 11월 30일
+    const attNames = [].concat(mail.atts || []).join(' ');
+    if (!t && !labeled && !KEY.test(line) && !KEY.test(subject) && !KEY.test(attNames)) continue;
     // 일정으로 잡은 근거(날짜·시간·일정 단어·장소) — 미리보기에서 강조
     const hits = [{ t: text.slice(d.idx, d.idx + d.len).trim(), k: 'date' }];
     if (t?.raw) hits.push({ t: t.raw, k: 'time' });

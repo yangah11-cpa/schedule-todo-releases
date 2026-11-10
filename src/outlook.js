@@ -38,6 +38,7 @@ try {
         subject = [string]$m.Subject
         from = [string]$m.SenderName
         fromAddr = $(try { [string]$m.SenderEmailAddress } catch { '' })
+        atts = @($(try { foreach ($a in $m.Attachments) { [string]$a.FileName } } catch {}) | Where-Object { $_ -and $_ -notmatch '^image\d+\.(png|jpe?g|gif)$' })
         received = $m.ReceivedTime.ToString('yyyy-MM-ddTHH:mm:ss')
         unread = [bool]$m.UnRead
         body = $body
