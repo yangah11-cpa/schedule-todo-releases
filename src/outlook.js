@@ -37,6 +37,7 @@ try {
         id = [string]$m.EntryID
         subject = [string]$m.Subject
         from = [string]$m.SenderName
+        fromAddr = $(try { [string]$m.SenderEmailAddress } catch { '' })
         received = $m.ReceivedTime.ToString('yyyy-MM-ddTHH:mm:ss')
         unread = [bool]$m.UnRead
         body = $body

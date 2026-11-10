@@ -158,12 +158,25 @@ function findPlace(text) {
   return m ? m[1].trim().replace(/\s{2,}/g, ' ') : '';
 }
 
+// 자동 발송 알림 메일(로그인·보안·결제·배송·광고 등)은 일정이 아니다
+const AUTO_SENDER = /no-?reply|do-?not-?reply|donotreply|mailer-daemon|notification|notice|alert|news(letter)?@|계정\s*팀|account team|security/i;
+const AUTO_SUBJECT = /로그인|로그 인|sign-?in|보안\s*(알림|경고|코드)|인증\s*(번호|코드)|비밀번호|password|verification|영수증|receipt|결제|청구서|invoice|주문|배송|구독|뉴스레터|newsletter|\(광고\)|\[광고\]|unsubscribe/i;
+// 메일 머리글·발송 정보 줄 (일정 날짜가 아님)
+const META_LINE = /^\s*(?:날짜|보낸\s*날짜|받은\s*날짜|발송\s*(?:일시|시간)|date|sent|received|timestamp|시간\s*\(UTC\)|time)\s*[:：]/i;
+
+export function isAutoMail(mail) {
+  return AUTO_SENDER.test(`${mail.from || ''} ${mail.fromAddr || ''}`) || AUTO_SUBJECT.test(mail.subject || '');
+}
+
 /**
  * 메일 하나 → 일정 후보 목록
  * @param {{id,subject,from,received,body,meeting?}} mail
  * @param {string} today YYYY-MM-DD
  */
-export function mailCandidates(mail, today) {
+export function mailCandidates(mail, today, now = null) {
+  if (!mail.meeting?.start && isAutoMail(mail)) return [];
+  const nowStr = now || `${today}T00:00`; // YYYY-MM-DDTHH:mm
+  const recv = String(mail.received || '').slice(0, 16);
   const base = String(mail.received || '').slice(0, 10) || today;
   const subject = cleanSubject(mail.subject);
   const cands = [];
@@ -185,7 +198,7 @@ export function mailCandidates(mail, today) {
       meeting: true,
     };
     if (c.endDate < c.date) c.endDate = c.date;
-    if (c.endDate >= today) cands.push({ ...c, key: key(c) });
+    if (c.endDate >= today && (allDay || e.slice(0, 16) > nowStr)) cands.push({ ...c, key: key(c) }); // 끝난 모임은 제외
     return cands.map((x) => ({ ...x, title: subject, mailId: mail.id }));
   }
 
@@ -200,9 +213,15 @@ export function mailCandidates(mail, today) {
     let le = text.indexOf('\n', d.idx + d.len);
     if (le < 0) le = text.length;
     const line = text.slice(ls, le);
+    if (META_LINE.test(line)) continue; // "날짜: …" 같은 발송 정보
     const after = text.slice(d.idx + d.len, Math.min(le, d.idx + d.len + 40));
     const before = text.slice(Math.max(ls, d.idx - 14), d.idx);
     const t = findTime(after) || (/(오전|오후|\d\s*시|:\d\d)/.test(before) ? findTime(before) : null);
+    if (t && !d.endDate) {
+      const at = `${d.date}T${t.start}`;
+      if (at < nowStr) continue; // 이미 지난 시각
+      if (recv && at <= recv) continue; // 메일 받기 전 시각 = 지난 일을 적은 것
+    }
     // 시간도 없고 일정 관련 단어도 없으면 단순 언급으로 보고 건너뜀
     if (!t && !KEY.test(line) && !KEY.test(subject)) continue;
     const c = {
@@ -219,7 +238,9 @@ export function mailCandidates(mail, today) {
     cands.push({ ...c, key: k });
     if (cands.length >= 5) break;
   }
-  return cands.map((x) => ({ ...x, title: subject, mailId: mail.id }));
+  // 같은 날 시간 있는 후보가 있으면 종일 후보는 뺀다
+  const timed = new Set(cands.filter((c) => !c.allDay).map((c) => c.date));
+  return cands.filter((c) => !c.allDay || !timed.has(c.date)).map((x) => ({ ...x, title: subject, mailId: mail.id }));
 }
 
 export const _test = { findDates, findTime, findPlace };

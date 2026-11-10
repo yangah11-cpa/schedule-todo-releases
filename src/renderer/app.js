@@ -3264,13 +3264,15 @@ async function scanMail(manual = false) {
       return;
     }
     const today = D.today();
+    const nd = new Date();
+    const now = `${today}T${String(nd.getHours()).padStart(2, '0')}:${String(nd.getMinutes()).padStart(2, '0')}`;
     // 처리한 후보 기록은 90일 지나면 정리
     const cut = Date.now() - 90 * 864e5;
     for (const [k, t] of Object.entries(m.done)) if (t < cut) delete m.done[k];
     const prev = new Set(m.cands.map((c) => c.key));
     const cands = [];
     for (const mail of res.mails || []) {
-      for (const c of mailCandidates(mail, today)) {
+      for (const c of mailCandidates(mail, today, now)) {
         if (m.done[c.key]) continue;
         cands.push({ ...c, subject: mail.subject, from: mail.from, received: mail.received });
       }
