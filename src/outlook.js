@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-function script(outPath, { days, max, start, skipPath, attDir }) {
+function script(outPath, { days, max, start, skipPath, attDir, selected = false }) {
   const esc = (s) => s.replace(/'/g, "''");
   return `
 $ErrorActionPreference = 'Stop'
@@ -22,15 +22,24 @@ if (-not $ol) {
   try { $ol = New-Object -ComObject Outlook.Application } catch { Done @{ ok = $false; code = 'noOutlook'; error = $_.Exception.Message }; exit }
 }
 try {
-  $ns = $ol.GetNamespace('MAPI')
-  $inbox = $ns.GetDefaultFolder(6)
+  $sel = $${selected ? 'true' : 'false'}
   $since = (Get-Date).Date.AddDays(-${days})
-  $items = $inbox.Items
-  $items.Sort('[ReceivedTime]', $true)
+  if ($sel) {
+    # 지금 Outlook에서 열어 둔 메일, 없으면 목록에서 선택한 첫 메일
+    $items = @()
+    try { $w = $ol.ActiveWindow(); if ($w -and [int]$w.Class -eq 35) { $items = @($w.CurrentItem) } } catch {}
+    if ($items.Count -eq 0) { try { $s = $ol.ActiveExplorer().Selection; if ($s.Count -ge 1) { $items = @($s.Item(1)) } } catch {} }
+    if ($items.Count -eq 0) { Done @{ ok = $false; code = 'noSelection' }; exit }
+  } else {
+    $ns = $ol.GetNamespace('MAPI')
+    $inbox = $ns.GetDefaultFolder(6)
+    $items = $inbox.Items
+    $items.Sort('[ReceivedTime]', $true)
+  }
   $list = New-Object System.Collections.ArrayList
   foreach ($m in $items) {
     if ($list.Count -ge ${max}) { break }
-    try { if ($m.ReceivedTime -lt $since) { break } } catch {}
+    if (-not $sel) { try { if ($m.ReceivedTime -lt $since) { break } } catch {} }
     try {
       $cls = [int]$m.Class
       if ($cls -ne 43 -and $cls -ne 53) { continue }
@@ -42,7 +51,7 @@ try {
         from = [string]$m.SenderName
         fromAddr = $(try { [string]$m.SenderEmailAddress } catch { '' })
         atts = @($(try { foreach ($a in $m.Attachments) { [string]$a.FileName } } catch {}) | Where-Object { $_ -and $_ -notmatch '^image\d+\.(png|jpe?g|gif)$' })
-        received = $m.ReceivedTime.ToString('yyyy-MM-ddTHH:mm:ss')
+        received = $(try { $m.ReceivedTime.ToString('yyyy-MM-ddTHH:mm:ss') } catch { (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss') })
         unread = [bool]$m.UnRead
         body = $body
       }
@@ -79,6 +88,7 @@ try {
       [void]$list.Add($o)
     } catch {}
   }
+  if ($sel -and $list.Count -eq 0) { Done @{ ok = $false; code = 'notMail' }; exit }
   Done @{ ok = $true; mails = @($list) }
 } catch {
   Done @{ ok = $false; code = 'error'; error = $_.Exception.Message }
@@ -122,8 +132,12 @@ async function readInbox(opt = {}) {
 }
 
 function readRaw(opt = {}) {
-  const o = { days: Math.max(1, Math.min(31, opt.days | 0 || 7)), max: Math.max(10, Math.min(500, opt.max | 0 || 200)), start: !!opt.start };
-  if (process.env.ST_OUTLOOK_MOCK) return Promise.resolve(JSON.parse(fs.readFileSync(process.env.ST_OUTLOOK_MOCK, 'utf8')));
+  const o = { days: Math.max(1, Math.min(31, opt.days | 0 || 7)), max: Math.max(10, Math.min(500, opt.max | 0 || 200)), start: !!opt.start, selected: !!opt.selected };
+  if (o.selected) o.start = false;
+  if (process.env.ST_OUTLOOK_MOCK) {
+    const j = JSON.parse(fs.readFileSync(process.env.ST_OUTLOOK_MOCK, 'utf8'));
+    return Promise.resolve(o.selected && j.ok ? { ok: true, mails: j.mails.slice(0, 1) } : j);
+  }
   if (process.platform !== 'win32') return Promise.resolve({ ok: false, code: 'noOutlook', error: 'Windows에서만 사용할 수 있습니다.' });
   const stamp = `${process.pid}-${Date.now()}`;
   const outPath = path.join(os.tmpdir(), `st-outlook-${stamp}.json`);
@@ -159,4 +173,7 @@ function readRaw(opt = {}) {
   });
 }
 
-module.exports = { readInbox, script };
+/** Outlook에서 지금 선택하거나 열어 둔 메일 1통 */
+const readSelected = () => readInbox({ selected: true, max: 10 });
+
+module.exports = { readInbox, readSelected, script };

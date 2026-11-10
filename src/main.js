@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Tray, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Tray, nativeImage, globalShortcut } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { GoogleCalendar } = require('./google');
@@ -155,6 +155,7 @@ function createWindow() {
   });
 }
 
+app.on('will-quit', () => globalShortcut.unregisterAll());
 app.on('before-quit', () => {
   quitting = true;
 });
@@ -263,6 +264,20 @@ app.whenReady().then(() => {
   ipcMain.handle('push:notify', wrap((msg) => pushHub.notify(msg)));
   ipcMain.handle('drive:save', wrap((name, text) => google.saveAppFile(name, text)));
   ipcMain.handle('outlook:read', wrap((opt) => require('./outlook').readInbox(opt || {})));
+  ipcMain.handle('outlook:selected', wrap(() => require('./outlook').readSelected()));
+  // Outlook에서 메일을 고른 채 Ctrl+Shift+E → 이 프로그램이 앞으로 나와 그 메일로 일정/할 일 만들기
+  try {
+    const ok = globalShortcut.register('CommandOrControl+Shift+E', () => {
+      if (!win || win.isDestroyed()) return;
+      win.setAlwaysOnTop(true); // 다른 창 위로 확실히 올리기
+      showWindow();
+      setTimeout(() => !win.isDestroyed() && win.setAlwaysOnTop(false), 400);
+      win.webContents.send('outlook:pick');
+    });
+    if (!ok) console.warn('단축키 Ctrl+Shift+E를 다른 프로그램이 쓰고 있습니다.');
+  } catch {
+    /* 무시 */
+  }
 
   createWindow();
   setupAutoUpdate();

@@ -4,7 +4,7 @@ import { expandEvent, nextOccurrence, firstOnOrAfter, describeRule, parseQuickAd
 import { getHolidays } from './lib/holidays.js';
 import { solarPayload, lunarTargets, lunarPayload, fromGoogle, timeRange, composeDescription } from './lib/gsync.js';
 import { parseTeamWorkbook, myEngagements, teamOn, sameClient } from './lib/team.js';
-import { mailCandidates, stripQuoted, highlightHtml } from './lib/mailparse.js';
+import { mailCandidates, stripQuoted, highlightHtml, parseShared, cleanSubject } from './lib/mailparse.js';
 
 /* ───────────── 공통 ───────────── */
 const $ = (s, r = document) => r.querySelector(s);
@@ -3195,6 +3195,7 @@ async function init() {
   }
 
   renderMailBadge();
+  window.api.outlook.onPick?.(() => pickOutlookMail());
   setTimeout(() => mailState().enabled && scanMail(), 20000); // 시작 20초 뒤 첫 확인
   setInterval(() => mailState().enabled && scanMail(), 30 * 60 * 1000); // 30분마다
 
@@ -3321,6 +3322,7 @@ function openMailDialog() {
        <label class="checkline small"><input type="checkbox" id="mail-auto" ${m.enabled ? 'checked' : ''}>30분마다 자동 확인</label>
        <select class="inp small" id="mail-days" style="width:auto;height:32px">${[3, 7, 14, 30].map((d) => `<option value="${d}" ${m.days === d ? 'selected' : ''}>최근 ${d}일</option>`).join('')}</select>
        <div class="spacer"></div>
+       <button type="button" class="btn" data-pick title="Outlook에서 선택하거나 열어 둔 메일로 일정·할 일 만들기 (Ctrl+Shift+E)">선택한 메일로…</button>
        <button type="button" class="btn" data-scan>지금 확인</button>
        <button type="button" class="btn primary" data-x>닫기</button>
      </div>`,
@@ -3398,6 +3400,10 @@ function openMailDialog() {
   });
   el.addEventListener('click', async (e) => {
     if (e.target.closest('[data-x]')) return close();
+    if (e.target.closest('[data-pick]')) {
+      close();
+      return pickOutlookMail();
+    }
     if (e.target.closest('[data-scan]')) {
       body.insertAdjacentHTML('afterbegin', '<div class="note" id="mail-wait">받은 편지함 확인 중… (Outlook이 꺼져 있으면 켜는 데 시간이 걸릴 수 있습니다)</div>');
       await scanMail(true);
@@ -3490,5 +3496,101 @@ function showPeek(g) {
   }
   peekEl.style.left = `${left}px`;
   peekEl.style.top = `${top}px`;
+}
+
+/* ───────────── Outlook에서 고른 메일 → 일정 / 할 일 ───────────── */
+let picking = false;
+async function pickOutlookMail() {
+  if (picking) return;
+  picking = true;
+  toast('Outlook에서 선택한 메일을 읽는 중…');
+  try {
+    const r = await window.api.outlook.selected();
+    const res = r.ok ? r.data : { ok: false, error: r.error };
+    if (!res.ok) {
+      const msg = {
+        notRunning: 'Outlook이 실행 중이 아닙니다. Outlook을 열고 메일을 선택한 뒤 다시 눌러 주세요.',
+        noSelection: 'Outlook에서 메일을 하나 선택하거나 열어 두고 다시 눌러 주세요.',
+        notMail: '선택한 항목이 메일이 아닙니다.',
+        noOutlook: MAIL_ERR.noOutlook,
+      }[res.code] || `메일을 읽지 못했습니다: ${res.error || '알 수 없는 오류'}`;
+      toast(msg);
+      return;
+    }
+    const mail = res.mails[0];
+    mailBodies.set(mail.id, { body: stripQuoted(mail.body || '').trim(), atts: [].concat(mail.attText || []) });
+    openPickedMail(mail);
+  } finally {
+    picking = false;
+  }
+}
+function openPickedMail(mail) {
+  const today = D.today();
+  const nd = new Date();
+  const now = `${today}T${String(nd.getHours()).padStart(2, '0')}:${String(nd.getMinutes()).padStart(2, '0')}`;
+  const atts = [].concat(mail.attText || []);
+  // 1) 자동 후보와 같은 기준 (모임 요청·본문·첨부) → 2) 없으면 날짜만 있어도 찾기
+  let c = mailCandidates(mail, today, now)[0] || null;
+  if (!c) {
+    const full = [stripQuoted(mail.body || ''), ...atts.map((a) => a.text)].join('\n\n');
+    const r = parseShared(full, today, now);
+    if (r.found) c = { date: r.date, endDate: r.endDate, allDay: r.allDay, startTime: r.startTime, endTime: r.endTime, place: r.place, snippet: '' };
+  }
+  const subject = cleanSubject(mail.subject) || '(제목 없음)';
+  const d = (x) => `${+x.slice(5, 7)}/${+x.slice(8, 10)}(${'일월화수목금토'[D.dow(x)]})`;
+  const foundTxt = c
+    ? `${d(c.date)}${c.endDate && c.endDate !== c.date ? ` ~ ${d(c.endDate)}` : ''}${c.startTime ? ` ${c.startTime}${c.endTime ? `~${c.endTime}` : ''}` : ' 종일'}${c.place ? ` · ${c.place}` : ''}${c.att ? ` (📎 ${c.att})` : ''}`
+    : '날짜를 찾지 못했습니다. 다음 창에서 직접 고르세요.';
+  const memo = `메일: ${mail.subject || ''}\n보낸 사람: ${mail.from || ''} (${(mail.received || '').slice(0, 16).replace('T', ' ')})${c?.snippet && !c.meeting ? `\n${c.snippet}` : ''}`;
+  const { el, close } = openModal(
+    `<div class="mhead"><h1>메일로 일정·할 일 만들기</h1><button type="button" class="btn ghost icon" data-x aria-label="닫기">✕</button></div>
+     <div class="mbody">
+       <div class="small muted">${h(mail.from || '')} · ${h((mail.received || '').slice(0, 16).replace('T', ' '))}${atts.length ? ` · 📎 ${atts.length}개 읽음` : ''}</div>
+       <div class="fld" style="margin-top:10px"><label class="lbl" for="pk-t">제목</label><input class="inp" id="pk-t" value="${h(subject)}"></div>
+       <div class="pk-found ${c ? '' : 'none'}"><b>찾은 날짜</b> ${h(foundTxt)}</div>
+       <div class="pk-body">${c?.hits?.length ? highlightHtml(stripQuoted(mail.body || '').trim().slice(0, 2500), c.hits, h) : h(stripQuoted(mail.body || '').trim().slice(0, 2500))}</div>
+     </div>
+     <div class="mfoot"><span class="note">Ctrl+Shift+E로 언제든 열 수 있습니다</span><div class="spacer"></div>
+       <button type="button" class="btn" data-x>취소</button>
+       <button type="button" class="btn" data-mk="todo">할 일로</button>
+       <button type="button" class="btn primary" data-mk="event">일정으로</button></div>`,
+    { cls: 'wide' }
+  );
+  setTimeout(() => $('#pk-t', el)?.select(), 0);
+  el.addEventListener('click', (e) => {
+    if (e.target.closest('[data-x]')) return close();
+    const b = e.target.closest('[data-mk]');
+    if (!b) return;
+    const title = $('#pk-t', el).value.trim() || subject;
+    close();
+    if (b.dataset.mk === 'event') {
+      const st = c?.startTime || '09:00';
+      const [hh, mm] = st.split(':').map(Number);
+      const v = Math.min(hh * 60 + mm + 60, 23 * 60 + 59);
+      const end1 = `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`;
+      openEventDialog({
+        date: c?.date || today,
+        preset: {
+          title,
+          date: c?.date || today,
+          endDate: c?.endDate || c?.date || today,
+          allDay: c ? c.allDay : true,
+          startTime: st,
+          endTime: c?.endTime || end1,
+          place: c?.place || '',
+          memo,
+        },
+        onSaved: () => c?.key && (mailState().done[c.key] = Date.now()),
+      });
+    } else {
+      openTodoDialog(null, { title, due: c?.date || null, time: c?.startTime || '', memo });
+    }
+  });
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.id === 'pk-t' && !e.isComposing) {
+      e.preventDefault();
+      $('[data-mk="event"]', el).click();
+    }
+  });
 }
 

@@ -324,3 +324,9 @@ mark.hl-place { background: #CDEFD6; }
 .mailpeek .mp-lg mark { padding: 1px 6px; }
 .mailpeek .mp-att { margin: 14px -14px 6px; padding: 6px 14px; background: #F7F6F3; border-top: 1px solid #EEECE7; border-bottom: 1px solid #EEECE7; font-weight: 600; font-size: 12.5px; white-space: normal; }
 .mailw .tag.att { background: #F3ECDD; color: #7A5A12; max-width: 220px; display: inline-block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+/* 메일로 일정·할 일 만들기 */
+.pk-found { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: #EEF3FC; font-size: 13.5px; }
+.pk-found.none { background: #F7F6F3; color: #77736B; }
+.pk-found b { margin-right: 6px; }
+.pk-body { margin-top: 12px; max-height: 260px; overflow-y: auto; padding: 10px 12px; border: 1px solid #EEECE7; border-radius: 10px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; color: #3D3A35; }
+.pk-body mark { border-radius: 3px; padding: 0 2px; color: inherit; }
