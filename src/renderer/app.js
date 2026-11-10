@@ -4,7 +4,7 @@ import { expandEvent, nextOccurrence, firstOnOrAfter, describeRule, parseQuickAd
 import { getHolidays } from './lib/holidays.js';
 import { solarPayload, lunarTargets, lunarPayload, fromGoogle, timeRange, composeDescription } from './lib/gsync.js';
 import { parseTeamWorkbook, myEngagements, teamOn, sameClient } from './lib/team.js';
-import { mailCandidates } from './lib/mailparse.js';
+import { mailCandidates, stripQuoted, highlightHtml } from './lib/mailparse.js';
 
 /* ───────────── 공통 ───────────── */
 const $ = (s, r = document) => r.querySelector(s);
@@ -3249,6 +3249,7 @@ const MAIL_ERR = {
   noOutlook: 'PC에 설치된 Outlook을 찾지 못했습니다. 클래식 Outlook(Microsoft 365/Office)만 지원되며, "새 Outlook"은 지원되지 않습니다.',
 };
 let mailBusy = false;
+const mailBodies = new Map();
 async function scanMail(manual = false) {
   if (mailBusy) return;
   mailBusy = true;
@@ -3271,7 +3272,9 @@ async function scanMail(manual = false) {
     for (const [k, t] of Object.entries(m.done)) if (t < cut) delete m.done[k];
     const prev = new Set(m.cands.map((c) => c.key));
     const cands = [];
+    mailBodies.clear(); // 본문은 저장하지 않고 메모리에만 (미리보기용)
     for (const mail of res.mails || []) {
+      mailBodies.set(mail.id, stripQuoted(mail.body || '').trim());
       for (const c of mailCandidates(mail, today, now)) {
         if (m.done[c.key]) continue;
         cands.push({ ...c, subject: mail.subject, from: mail.from, received: mail.received });
@@ -3321,7 +3324,13 @@ function openMailDialog() {
        <button type="button" class="btn" data-scan>지금 확인</button>
        <button type="button" class="btn primary" data-x>닫기</button>
      </div>`,
-    { cls: 'wide', onClose: () => (refreshMailDialog = null) }
+    {
+      cls: 'wide',
+      onClose: () => {
+        refreshMailDialog = null;
+        hidePeek(true);
+      },
+    }
   );
   const body = $('#mailBody', el);
   const draw = () => {
@@ -3335,13 +3344,13 @@ function openMailDialog() {
     }
     const list = [...groups.values()]
       .map(
-        (cs) => `<div class="mailg">
+        (cs) => `<div class="mailg" data-mid="${h(cs[0].mailId)}">
           <div class="mailh"><b>${h(cs[0].subject || '(제목 없음)')}</b><span class="small muted">${h(cs[0].from || '')} · ${h((cs[0].received || '').slice(5, 16).replace('T', ' ').replace('-', '/'))}</span></div>
           ${cs
             .map(
               (c) => `<div class="mailc">
                 <div class="mailw"><span class="mwhen">${h(mailWhen(c))}</span>${c.meeting ? '<span class="tag">모임 요청</span>' : ''}${c.place ? `<span class="small muted">· ${h(c.place)}</span>` : ''}
-                  <div class="small muted msnip">${h(c.snippet)}</div></div>
+                  <div class="small muted msnip">${c.meeting ? h(c.snippet) : highlightHtml(c.snippet, c.hits, h)}</div></div>
                 <button type="button" class="btn" data-mskip="${h(c.key)}">무시</button>
                 <button type="button" class="btn primary" data-madd="${h(c.key)}">일정 추가</button>
               </div>`
@@ -3353,6 +3362,22 @@ function openMailDialog() {
     body.innerHTML = st + (list || `<div class="empty">${m.lastScan ? '새 일정 후보가 없습니다.' : '"지금 확인"을 눌러 받은 편지함을 확인하세요.'}</div>`);
   };
   refreshMailDialog = draw;
+  // 메일에 마우스를 올리면 본문 미리보기
+  let peekTimer = null;
+  body.addEventListener('mouseover', (e) => {
+    const g = e.target.closest('.mailg');
+    if (!g || e.target.closest('button')) return;
+    if (peekEl && peekEl.dataset.mid === g.dataset.mid) return keepPeek();
+    clearTimeout(peekTimer);
+    peekTimer = setTimeout(() => showPeek(g), 350);
+  });
+  body.addEventListener('mouseout', (e) => {
+    const g = e.target.closest('.mailg');
+    if (g && !g.contains(e.relatedTarget)) {
+      clearTimeout(peekTimer);
+      hidePeek();
+    }
+  });
   draw();
   const markDone = (key) => {
     m.done[key] = Date.now();
@@ -3406,5 +3431,58 @@ function openMailDialog() {
       });
     }
   });
+}
+
+/* 메일 본문 미리보기 (마우스 올림) */
+let peekEl = null;
+let peekHide = null;
+function keepPeek() {
+  clearTimeout(peekHide);
+}
+function hidePeek(now = false) {
+  clearTimeout(peekHide);
+  const go = () => {
+    peekEl?.remove();
+    peekEl = null;
+  };
+  if (now) go();
+  else peekHide = setTimeout(go, 250); // 미리보기 창으로 옮겨 가 스크롤할 수 있게 잠깐 기다림
+}
+function showPeek(g) {
+  hidePeek(true);
+  const m = mailState();
+  const cs = m.cands.filter((c) => c.mailId === g.dataset.mid);
+  if (!cs.length) return;
+  const text = mailBodies.get(g.dataset.mid);
+  // 일정으로 잡은 근거(날짜·시간·일정 단어·장소)를 강조
+  const hits = cs.flatMap((c) => c.hits || []);
+  let html;
+  if (text === undefined) html = '<div class="muted">본문은 [지금 확인] 후에 볼 수 있습니다. (메일 내용은 저장하지 않습니다)</div>';
+  else if (!text) html = '<div class="muted">(본문 없음)</div>';
+  else html = highlightHtml((text.length > 4000 ? `${text.slice(0, 4000)}…` : text).replace(/\n{3,}/g, '\n\n'), hits, h);
+  const legend = '<div class="mp-lg"><mark class="hl-date">날짜</mark><mark class="hl-time">시간</mark><mark class="hl-key">일정 단어</mark><mark class="hl-place">장소</mark></div>';
+  peekEl = document.createElement('div');
+  peekEl.className = 'mailpeek';
+  peekEl.dataset.mid = g.dataset.mid;
+  peekEl.innerHTML = `<div class="mp-h"><b>${h(cs[0].subject || '(제목 없음)')}</b><span>${h(cs[0].from || '')} · ${h((cs[0].received || '').slice(0, 16).replace('T', ' '))}</span></div>${legend}<div class="mp-b">${html}</div>`;
+  document.body.appendChild(peekEl);
+  peekEl.addEventListener('mouseenter', keepPeek);
+  peekEl.addEventListener('mouseleave', () => hidePeek());
+  // 후보 창 옆(공간이 넓은 쪽)에 표시
+  const r = g.getBoundingClientRect();
+  const modal = g.closest('.modal')?.getBoundingClientRect() || r;
+  const W = Math.min(440, Math.max(modal.left, innerWidth - modal.right) - 24);
+  const pw = W >= 280 ? W : Math.min(440, innerWidth - 40);
+  peekEl.style.width = `${pw}px`;
+  const ph = Math.min(peekEl.offsetHeight, innerHeight - 40);
+  let left;
+  let top = Math.max(20, Math.min(r.top, innerHeight - ph - 20));
+  if (W >= 280) left = modal.left > innerWidth - modal.right ? modal.left - pw - 12 : modal.right + 12;
+  else {
+    left = Math.max(20, Math.min(r.left, innerWidth - pw - 20));
+    top = r.bottom + 6 + ph < innerHeight ? r.bottom + 6 : Math.max(20, r.top - ph - 6);
+  }
+  peekEl.style.left = `${left}px`;
+  peekEl.style.top = `${top}px`;
 }
 

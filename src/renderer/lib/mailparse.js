@@ -2,7 +2,7 @@
 import { addDays, dow, make, parts, daysInMonth } from './dates.js';
 
 const DOW = { 일: 0, 월: 1, 화: 2, 수: 3, 목: 4, 금: 5, 토: 6 };
-const KEY = /회의|미팅|meeting|방문|실사|감사|일정|면담|인터뷰|교육|세미나|워크숍|설명회|마감|제출|기한|까지|약속|참석|일시|예정|진행|통화|콜|점심|저녁|식사|만찬|발표|보고|입회|킥오프|kick|착수|종료|평가|심사|강의|행사|모임|출장/i;
+const KEY = /회의|미팅|meeting|방문|실사|감사(?!합니|드립|드려|해요|하다|했습|의 말)|일정|면담|인터뷰|교육|세미나|워크숍|설명회|마감|제출|기한|까지|약속|참석|일시|예정|진행|통화|콜|점심|저녁|식사|만찬|발표|보고|입회|킥오프|kick|착수|종료|평가|심사|강의|행사|모임|출장/i;
 
 /** 제목 정리: RE:/FW:/회신:/전달:/[외부] 등 제거 */
 export function cleanSubject(s) {
@@ -149,7 +149,9 @@ function findTime(seg) {
       if (t2.h * 60 + t2.mi > times[0].h * 60 + times[0].mi) end = fmt(t2);
     }
   }
-  return { start, end };
+  // 하이라이트용 원문: 시작 ~ (종료) 시간 표현
+  const rawEnd = end ? times[1].idx + times[1].len : times[0].idx + times[0].len;
+  return { start, end, raw: seg.slice(times[0].idx, rawEnd).trim() };
 }
 
 /** "장소: ..." 줄 */
@@ -196,6 +198,7 @@ export function mailCandidates(mail, today, now = null) {
       place: mail.meeting.location || '',
       snippet: '모임 요청',
       meeting: true,
+      hits: mail.meeting.location ? [{ t: mail.meeting.location, k: 'place' }] : [],
     };
     if (c.endDate < c.date) c.endDate = c.date;
     if (c.endDate >= today && (allDay || e.slice(0, 16) > nowStr)) cands.push({ ...c, key: key(c) }); // 끝난 모임은 제외
@@ -224,7 +227,13 @@ export function mailCandidates(mail, today, now = null) {
     }
     // 시간도 없고 일정 관련 단어도 없으면 단순 언급으로 보고 건너뜀
     if (!t && !KEY.test(line) && !KEY.test(subject)) continue;
+    // 일정으로 잡은 근거(날짜·시간·일정 단어·장소) — 미리보기에서 강조
+    const hits = [{ t: text.slice(d.idx, d.idx + d.len).trim(), k: 'date' }];
+    if (t?.raw) hits.push({ t: t.raw, k: 'time' });
+    for (const w of new Set([...line.matchAll(new RegExp(KEY.source, 'gi'))].map((x) => x[0]))) hits.push({ t: w, k: 'key' });
+    if (place) hits.push({ t: place, k: 'place' });
     const c = {
+      hits,
       date: d.date,
       endDate: d.endDate || d.date,
       allDay: !t,
@@ -241,6 +250,21 @@ export function mailCandidates(mail, today, now = null) {
   // 같은 날 시간 있는 후보가 있으면 종일 후보는 뺀다
   const timed = new Set(cands.filter((c) => !c.allDay).map((c) => c.date));
   return cands.filter((c) => !c.allDay || !timed.has(c.date)).map((x) => ({ ...x, title: subject, mailId: mail.id }));
+}
+
+/** 본문 text에서 hits를 찾아 <mark>로 감싼 HTML (나머지는 이스케이프) */
+export function highlightHtml(text, hits, esc) {
+  const list = [...new Map((hits || []).filter((x) => x.t && x.t.length >= 1).map((x) => [x.t, x])).values()].sort((a, b) => b.t.length - a.t.length);
+  if (!list.length) return esc(text);
+  const re = new RegExp(list.map((x) => x.t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')).join('|'), 'g');
+  let out = '';
+  let last = 0;
+  for (const m of text.matchAll(re)) {
+    const hit = list.find((x) => new RegExp(`^${x.t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')}$`).test(m[0]));
+    out += esc(text.slice(last, m.index)) + `<mark class="hl-${hit ? hit.k : 'key'}">${esc(m[0])}</mark>`;
+    last = m.index + m[0].length;
+  }
+  return out + esc(text.slice(last));
 }
 
 export const _test = { findDates, findTime, findPlace };
