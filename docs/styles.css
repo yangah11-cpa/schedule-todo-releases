@@ -301,3 +301,8 @@ textarea.inp { height: auto; min-height: 84px; padding: 10px 12px; resize: verti
 .wheel-f { display: flex; gap: 10px; margin-top: 10px; }
 .wheel-f .btn { flex: 1; height: 48px; font-size: 16px; }
 .paste-btn { width: 100%; border: 1px dashed var(--line2); background: var(--soft, #F3F6FC); color: var(--accent-d); border-radius: 12px; height: 42px; font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+.sh-imgs { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 8px; }
+.sh-imgs img { height: 120px; border-radius: 10px; border: 1px solid var(--line); object-fit: cover; }
+.sh-found { margin-top: 10px; padding: 10px 12px; background: var(--soft, #F3F6FC); border-radius: 12px; font-size: 14px; line-height: 1.5; }
+.sh-found:empty { display: none; }
+#sh-ocr { margin-bottom: 8px; color: var(--accent-d); }

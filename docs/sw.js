@@ -1,5 +1,5 @@
 // 서비스 워커: 오프라인 실행(앱 파일 캐시), 자동 업데이트, 푸시 알림
-const CACHE = 'st-pwa-v12';
+const CACHE = 'st-pwa-v13';
 const SHELL = [
   './',
   './index.html',
@@ -26,14 +26,39 @@ self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE && k !== 'st-share').map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
 
 // 앱 파일: 네트워크 우선(항상 최신) → 실패하면 캐시. Google API 등 외부 요청은 건드리지 않음.
+// 휴대폰 공유(카톡·문자·사진 등) 받기: 받은 글·이미지를 잠시 보관하고 앱을 연다
+const SHARE = 'st-share';
+async function receiveShare(req) {
+  const fd = await req.formData();
+  const c = await caches.open(SHARE);
+  const keys = await c.keys();
+  await Promise.all(keys.map((k) => c.delete(k)));
+  const files = fd.getAll('files').filter((f) => f && typeof f !== 'string' && f.size);
+  const meta = { title: fd.get('title') || '', text: fd.get('text') || '', url: fd.get('url') || '', files: [] };
+  for (const [i, f] of files.slice(0, 3).entries()) {
+    const key = `./__share__/file${i}`;
+    if (/^text\//.test(f.type) || /\.txt$/i.test(f.name || '')) meta.text += `\n${await f.text()}`;
+    else {
+      await c.put(key, new Response(f, { headers: { 'Content-Type': f.type || 'application/octet-stream' } }));
+      meta.files.push({ key, type: f.type, name: f.name || '' });
+    }
+  }
+  await c.put('./__share__/meta', new Response(JSON.stringify(meta), { headers: { 'Content-Type': 'application/json' } }));
+  return Response.redirect('./index.html?shared=1', 303);
+}
+
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
+  if (e.request.method === 'POST' && url.origin === self.location.origin && url.pathname.endsWith('/share-target')) {
+    e.respondWith(receiveShare(e.request).catch(() => Response.redirect('./index.html?shared=0', 303)));
+    return;
+  }
   if (e.request.method !== 'GET' || url.origin !== self.location.origin) return;
   e.respondWith(
     fetch(e.request)

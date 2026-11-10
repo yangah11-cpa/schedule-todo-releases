@@ -1137,7 +1137,7 @@ async function toggleTask(id) {
   }
 }
 
-function openTask(t = null) {
+function openTask(t = null, preset = null) {
   const kids = t ? S.tasks.filter((k) => k.parent === t.id && !k.deleted).sort((a, b) => String(a.position).localeCompare(String(b.position))) : [];
   const f = {
     title: t?.title || '',
@@ -1146,6 +1146,7 @@ function openTask(t = null) {
     notes: t?.notes || '',
     subs: kids.map((k) => ({ id: k.id, title: k.title || '', done: k.status === 'completed' })),
   };
+  if (preset && !t) Object.assign(f, preset);
   const removed = [];
   const { el, body, close } = openSheet(
     t ? '할 일' : '새 할 일',
@@ -1507,35 +1508,158 @@ function openEventFromText(text) {
 (() => {
   const sp = new URLSearchParams(location.search);
   const shared = [sp.get('title'), sp.get('text'), sp.get('url')].filter(Boolean).join('\n').trim();
-  if (shared) {
-    try {
-      sessionStorage.setItem('st.share', shared);
-    } catch {
-      S.pendingShare = shared;
-    }
-    history.replaceState(null, '', location.pathname);
-  }
+  if (shared) S.pendingShare = { text: shared, files: [] };
+  if (sp.get('shared') === '1') S.pendingShare = { fromSw: true };
+  if (sp.get('shared') === '0') S.shareFailed = true;
+  if (shared || sp.has('shared')) history.replaceState(null, '', location.pathname);
 })();
-function takeShare() {
-  let t = S.pendingShare || null;
-  S.pendingShare = null;
+/** 서비스 워커가 보관한 공유 내용 꺼내기 */
+async function readSwShare() {
   try {
-    t = t || sessionStorage.getItem('st.share');
-    sessionStorage.removeItem('st.share');
+    const c = await caches.open('st-share');
+    const mr = await c.match('./__share__/meta');
+    if (!mr) return null;
+    const meta = await mr.json();
+    const files = [];
+    for (const f of meta.files || []) {
+      const r = await c.match(f.key);
+      if (r) files.push(new File([await r.blob()], f.name || 'image', { type: f.type }));
+    }
+    for (const k of await c.keys()) await c.delete(k);
+    const text = [meta.title, meta.text, meta.url].filter(Boolean).join('\n').trim();
+    return { text, files };
   } catch {
-    /* 무시 */
+    return null;
   }
-  return t;
 }
 async function maybeOpenShare() {
-  const t = takeShare();
-  if (!t) return;
+  if (S.shareFailed) {
+    S.shareFailed = false;
+    toast('공유 받은 내용을 읽지 못했습니다. 다시 공유해 주세요.');
+  }
+  let p = S.pendingShare;
+  S.pendingShare = null;
+  if (!p) return;
+  if (p.fromSw) p = await readSwShare();
+  if (!p || (!p.text && !p.files?.length)) return;
   if (S.tab !== 'cal') {
     S.tab = 'cal';
     render();
   }
-  openEventFromText(t);
+  openShareChooser(p.text || '', p.files || []);
 }
+
+/* 이미지 글자 읽기 (휴대폰 안에서 처리, 처음 한 번 약 8MB 내려받음) */
+function loadScript(src) {
+  return new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = res;
+    s.onerror = () => rej(new Error('글자 인식 도구를 불러오지 못했습니다.'));
+    document.head.appendChild(s);
+  });
+}
+async function ocrImage(file, onProgress) {
+  if (!window.Tesseract) await loadScript('./vendor/ocr/tesseract.min.js');
+  const base = new URL('./vendor/ocr/', location.href).href;
+  const worker = await window.Tesseract.createWorker(['kor', 'eng'], 1, {
+    workerPath: `${base}worker.min.js`,
+    corePath: base,
+    langPath: base,
+    logger: (m) => onProgress?.(m),
+  });
+  try {
+    const { data } = await worker.recognize(file);
+    return cleanOcr(data.text || '');
+  } finally {
+    worker.terminate();
+  }
+}
+// 한글 글자 사이에 끼는 불필요한 띄어쓰기 정리
+function cleanOcr(t) {
+  return t
+    .replace(/([가-힣])\s(?=[가-힣]\s[가-힣])/g, '$1')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/** 공유 받은 내용 → 일정 또는 할 일 고르기 */
+function openShareChooser(text, files) {
+  const imgs = files.filter((f) => /^image\//.test(f.type));
+  const { el, body, close } = openSheet(
+    '공유 받은 내용',
+    `${imgs.length ? `<div class="sh-imgs">${imgs.map((_, i) => `<img data-i="${i}" alt="공유 받은 이미지">`).join('')}</div>` : ''}
+     <div class="note" id="sh-ocr" ${imgs.length ? '' : 'hidden'}>이미지에서 글자를 읽는 중…</div>
+     <div class="fld"><label class="lbl" for="sh-t">내용 (고칠 수 있어요)</label><textarea class="inp" id="sh-t" rows="6">${h(text)}</textarea></div>
+     <div class="sh-found" id="sh-found"></div>`,
+    `<button type="button" class="btn" data-mk="todo" style="flex:1">할 일로</button><button type="button" class="btn primary" data-mk="event" style="flex:1.4">일정으로</button>`
+  );
+  const ta = $('#sh-t', body);
+  const found = $('#sh-found', body);
+  const show = () => {
+    const r = parseShared(ta.value, D.today(), nowStamp());
+    const d = (x) => `${+x.slice(5, 7)}/${+x.slice(8, 10)}(${'일월화수목금토'[D.dow(x)]})`;
+    found.innerHTML = ta.value.trim()
+      ? r.found
+        ? `<b>찾은 내용</b> ${h(d(r.date))}${r.endDate !== r.date ? ` ~ ${h(d(r.endDate))}` : ''}${r.startTime ? ` ${h(r.startTime)}${r.endTime ? `~${h(r.endTime)}` : ''}` : ' 종일'}${r.place ? ` · ${h(r.place)}` : ''}<br><span class="muted">제목: ${h(r.title)}</span>`
+        : '<span class="muted">날짜를 찾지 못했습니다. 다음 화면에서 직접 고르세요.</span>'
+      : '';
+  };
+  ta.addEventListener('input', show);
+  show();
+  imgs.forEach((f, i) => {
+    const im = $(`img[data-i="${i}"]`, body);
+    if (im) im.src = URL.createObjectURL(f);
+  });
+  if (imgs.length) {
+    const st = $('#sh-ocr', body);
+    (async () => {
+      const out = [];
+      for (const [i, f] of imgs.entries()) {
+        try {
+          out.push(
+            await ocrImage(f, (m) => {
+              if (!st.isConnected) return;
+              const pct = Math.round((m.progress || 0) * 100);
+              st.textContent =
+                m.status === 'recognizing text'
+                  ? `이미지${imgs.length > 1 ? ` ${i + 1}` : ''}에서 글자를 읽는 중… ${pct}%`
+                  : '글자 인식 준비 중… (처음 한 번은 1분 정도 걸릴 수 있어요)';
+            })
+          );
+        } catch (e) {
+          st.textContent = e.message || '이미지에서 글자를 읽지 못했습니다.';
+          return;
+        }
+      }
+      if (!ta.isConnected) return;
+      const got = out.filter(Boolean).join('\n\n');
+      ta.value = [ta.value.trim(), got].filter(Boolean).join('\n\n');
+      st.textContent = got ? '이미지에서 읽은 글자를 넣었습니다. 틀린 글자는 고쳐 주세요.' : '이미지에서 글자를 찾지 못했습니다.';
+      show();
+    })();
+  }
+  el.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-mk]');
+    if (!b) return;
+    const t = ta.value.trim();
+    if (!t) return toast('내용이 없습니다.');
+    const r = parseShared(t, D.today(), nowStamp());
+    close();
+    setTimeout(() => {
+      if (b.dataset.mk === 'event') {
+        const { found: ok, ...preset } = r;
+        openEvent(null, preset.date, preset);
+      } else {
+        S.tab = 'todo';
+        render();
+        openTask(null, { title: r.title, hasDue: r.found, due: r.date, notes: r.memo });
+      }
+    }, 300);
+  });
+}
+
 /** 붙여넣기로 일정 만들기 */
 function openPasteSheet() {
   const { el, body, close } = openSheet(
@@ -1551,7 +1675,7 @@ function openPasteSheet() {
     const t = $('#paste-t', body).value.trim();
     if (!t) return toast('붙여넣은 내용이 없습니다.');
     close();
-    setTimeout(() => openEventFromText(t), 300);
+    setTimeout(() => openShareChooser(t, []), 300);
   });
 }
 

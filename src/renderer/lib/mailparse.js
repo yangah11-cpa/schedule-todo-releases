@@ -308,6 +308,7 @@ export function parseShared(raw, today, now) {
     .trim()
     .replace(/\s*(?:입니다|이에요|예요|입니당|이요|입니다요)\s*[.!]*$/, '')
     .replace(/(?:은|는|이|가|:|：)\s*$/, '')
+    .replace(/\s+(?:일시|일자|날짜|시간|시각)\s*$/, '')
     .replace(/\s*(?:은|는)\s+(?=\S*$)/, ' ')
     .trim();
   if (title.length < 2) title = first;
