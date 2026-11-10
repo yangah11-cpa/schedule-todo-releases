@@ -3274,7 +3274,7 @@ async function scanMail(manual = false) {
     const cands = [];
     mailBodies.clear(); // 본문은 저장하지 않고 메모리에만 (미리보기용)
     for (const mail of res.mails || []) {
-      mailBodies.set(mail.id, stripQuoted(mail.body || '').trim());
+      mailBodies.set(mail.id, { body: stripQuoted(mail.body || '').trim(), atts: [].concat(mail.attText || []) });
       for (const c of mailCandidates(mail, today, now)) {
         if (m.done[c.key]) continue;
         cands.push({ ...c, subject: mail.subject, from: mail.from, received: mail.received });
@@ -3336,7 +3336,7 @@ function openMailDialog() {
   const draw = () => {
     const st = m.lastError
       ? `<div class="warn">${h(m.lastError)}</div>`
-      : `<div class="note">${m.lastScan ? `마지막 확인: ${new Date(m.lastScan).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · ` : ''}PC의 Outlook 받은 편지함에서 날짜·시간이 적힌 메일을 찾아 보여 줍니다. 메일 내용은 이 PC 안에서만 처리합니다.</div>`;
+      : `<div class="note">${m.lastScan ? `마지막 확인: ${new Date(m.lastScan).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · ` : ''}PC의 Outlook 받은 편지함에서 날짜·시간이 적힌 메일(첨부 PDF·Word·한글 파일 포함)을 찾아 보여 줍니다. 메일 내용은 이 PC 안에서만 처리합니다.</div>`;
     const groups = new Map();
     for (const c of m.cands) {
       if (!groups.has(c.mailId)) groups.set(c.mailId, []);
@@ -3349,7 +3349,7 @@ function openMailDialog() {
           ${cs
             .map(
               (c) => `<div class="mailc">
-                <div class="mailw"><span class="mwhen">${h(mailWhen(c))}</span>${c.meeting ? '<span class="tag">모임 요청</span>' : ''}${c.place ? `<span class="small muted">· ${h(c.place)}</span>` : ''}
+                <div class="mailw"><span class="mwhen">${h(mailWhen(c))}</span>${c.meeting ? '<span class="tag">모임 요청</span>' : ''}${c.att ? `<span class="tag att" title="첨부 파일에서 찾음">📎 ${h(c.att)}</span>` : ''}${c.place ? `<span class="small muted">· ${h(c.place)}</span>` : ''}
                   <div class="small muted msnip">${c.meeting ? h(c.snippet) : highlightHtml(c.snippet, c.hits, h)}</div></div>
                 <button type="button" class="btn" data-mskip="${h(c.key)}">무시</button>
                 <button type="button" class="btn primary" data-madd="${h(c.key)}">일정 추가</button>
@@ -3453,13 +3453,19 @@ function showPeek(g) {
   const m = mailState();
   const cs = m.cands.filter((c) => c.mailId === g.dataset.mid);
   if (!cs.length) return;
-  const text = mailBodies.get(g.dataset.mid);
+  const mb = mailBodies.get(g.dataset.mid);
+  const text = mb?.body;
   // 일정으로 잡은 근거(날짜·시간·일정 단어·장소)를 강조
   const hits = cs.flatMap((c) => c.hits || []);
   let html;
   if (text === undefined) html = '<div class="muted">본문은 [지금 확인] 후에 볼 수 있습니다. (메일 내용은 저장하지 않습니다)</div>';
   else if (!text) html = '<div class="muted">(본문 없음)</div>';
   else html = highlightHtml((text.length > 4000 ? `${text.slice(0, 4000)}…` : text).replace(/\n{3,}/g, '\n\n'), hits, h);
+  // 첨부 파일 내용
+  for (const a of mb?.atts || []) {
+    const t = a.text.length > 3000 ? `${a.text.slice(0, 3000)}…` : a.text;
+    html += `<div class="mp-att">📎 ${h(a.name)}</div>${highlightHtml(t.replace(/\n{3,}/g, '\n\n'), hits, h)}`;
+  }
   const legend = '<div class="mp-lg"><mark class="hl-date">날짜</mark><mark class="hl-time">시간</mark><mark class="hl-key">일정 단어</mark><mark class="hl-place">장소</mark></div>';
   peekEl = document.createElement('div');
   peekEl.className = 'mailpeek';

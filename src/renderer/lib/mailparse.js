@@ -156,7 +156,7 @@ function findTime(seg) {
 
 /** "장소: ..." 줄 */
 function findPlace(text) {
-  const m = text.match(/(?:^|\n)\s*[-*•·▶■□◎○●※]?\s*(?:장\s*소|위\s*치|place|location)\s*[:：]\s*([^\n]{2,80})/i);
+  const m = text.match(/(?:^|\n)\s*(?:[-*•·▶■□◎○●※]|\(?\d{1,2}[.)]|\(?[가-하][.)]|[①-⑳])?\s*(?:장\s*소|위\s*치|place|location)\s*[:：]\s*([^\n]{2,80})/i);
   return m ? m[1].trim().replace(/\s{2,}/g, ' ') : '';
 }
 
@@ -206,8 +206,17 @@ export function mailCandidates(mail, today, now = null) {
   }
 
   const body = stripQuoted(mail.body);
-  const text = `${subject}\n${body}`;
-  const place = findPlace(body);
+  // 첨부 파일 글자도 이어 붙여 함께 찾는다 (어느 첨부에서 찾았는지 기록)
+  const atts = [].concat(mail.attText || []).filter((a) => a?.text);
+  let text = `${subject}\n${body}`;
+  const attRanges = [];
+  for (const a of atts) {
+    text += `\n\n`;
+    attRanges.push({ name: a.name, from: text.length, to: text.length + a.text.length });
+    text += a.text;
+  }
+  const attAt = (i) => attRanges.find((r) => i >= r.from && i < r.to)?.name || null;
+  const place = findPlace(body) || atts.map((a) => findPlace(a.text)).find(Boolean) || '';
   for (const d of findDates(text, base)) {
     const last = d.endDate || d.date;
     if (last < today) continue; // 지난 날짜는 제외
@@ -243,6 +252,7 @@ export function mailCandidates(mail, today, now = null) {
       endTime: t ? t.end || null : null,
       place,
       snippet: line.trim().replace(/\s{2,}/g, ' ').slice(0, 120),
+      att: attAt(d.idx),
     };
     const k = key(c);
     if (cands.some((x) => x.key === k)) continue;

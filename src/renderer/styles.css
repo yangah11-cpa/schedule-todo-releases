@@ -322,3 +322,5 @@ mark.hl-key { background: #D6E4FF; }
 mark.hl-place { background: #CDEFD6; }
 .mailpeek .mp-lg { display: flex; gap: 6px; padding: 6px 14px 0; font-size: 11px; }
 .mailpeek .mp-lg mark { padding: 1px 6px; }
+.mailpeek .mp-att { margin: 14px -14px 6px; padding: 6px 14px; background: #F7F6F3; border-top: 1px solid #EEECE7; border-bottom: 1px solid #EEECE7; font-weight: 600; font-size: 12.5px; white-space: normal; }
+.mailw .tag.att { background: #F3ECDD; color: #7A5A12; max-width: 220px; display: inline-block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
