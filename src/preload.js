@@ -15,7 +15,17 @@ contextBridge.exposeInMainWorld('api', {
   push: { init: call('push:init'), notify: call('push:notify') },
   drive: { save: call('drive:save'), load: call('drive:load') },
   team: { open: call('team:open') },
-  phone: { messages: call('phone:messages'), thread: call('phone:thread') },
+  phone: { messages: call('phone:messages'), thread: call('phone:thread'), contacts: call('phone:contacts') },
+  calls: {
+    list: call('calls:list'),
+    status: call('calls:status'),
+    install: call('calls:install'),
+    audio: call('calls:audio'),
+    transcribe: call('calls:transcribe'),
+    openFile: call('calls:openFile'),
+    pickDir: call('calls:pickDir'),
+    onProgress: (cb) => ipcRenderer.on('calls:progress', (_e, p) => cb(p)),
+  },
   clip: { onPick: (cb) => ipcRenderer.on('clip:pick', (_e, d) => cb(d)) },
   outlook: { read: call('outlook:read'), selected: call('outlook:selected'), open: call('outlook:open'), onPick: (cb) => ipcRenderer.on('outlook:pick', () => cb()) },
   patch: {

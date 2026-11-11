@@ -175,4 +175,27 @@ function readThread({ id, limit = 80 } = {}) {
   }
 }
 
-module.exports = { readMessages, readThread, fixMojibake };
+/** 번호 → 연락처 이름·회사 (통화 녹음 표시용) */
+function lookupContacts(nums = []) {
+  const src = dbDir();
+  if (!src || !fs.existsSync(path.join(src, 'contacts.db'))) return {};
+  const { DatabaseSync } = require('node:sqlite');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'st-phone-'));
+  try {
+    const want = new Set(nums.map(key).filter((k) => k.length >= 7));
+    const cdb = new DatabaseSync(copyDb(src, 'contacts.db', tmp));
+    const out = {};
+    for (const r of cdb.prepare('SELECT p.phone_number num, c.display_name name, c.company company FROM phonenumber p JOIN contact c ON c.contact_id = p.contact_id').all()) {
+      const k = key(r.num);
+      if (want.has(k)) out[k] = { name: r.name || '', company: r.company || '' };
+    }
+    cdb.close();
+    return out;
+  } catch {
+    return {};
+  } finally {
+    fs.rm(tmp, { recursive: true, force: true }, () => {});
+  }
+}
+
+module.exports = { readMessages, readThread, lookupContacts, fixMojibake };

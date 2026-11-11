@@ -2089,6 +2089,7 @@ async function openSettings() {
   const pages = () => {
     const g = S.g;
     const m = mailState();
+    const cs = callState();
     const kw = kwStore();
     const learned = Object.entries(kw.w || {}).filter(([, v]) => v.s > 0);
     return [
@@ -2190,6 +2191,22 @@ async function openSettings() {
           ).join('')}</div></details>`,
       },
       {
+        id: 'calls',
+        icon: '📞',
+        title: '통화 녹음',
+        sum: `${cs.on ? (S.callReady ? '자동 변환 켬' : '음성 인식 설치 필요') : '끔'}`,
+        html: () => `
+          <label class="checkline small"><input type="checkbox" id="s-callon" ${cs.on ? 'checked' : ''}>OneDrive의 통화 녹음을 글로 바꿔 메일·문자 탭에 표시</label>
+          <div class="kv"><span>녹음 폴더</span><span class="small" style="word-break:break-all">${h(cs.dir || S.callDir || '(기본) OneDrive\\통화녹음')}</span><button type="button" class="btn" data-calldir>바꾸기</button></div>
+          <div class="row gap8"><label class="small" for="s-callmodel">음성 모델</label>
+            <select class="inp" id="s-callmodel" style="width:auto;height:34px"><option value="small" ${cs.model === 'small' ? 'selected' : ''}>빠름 · small (약 260MB)</option><option value="turbo" ${cs.model === 'turbo' ? 'selected' : ''}>정확 · large-v3-turbo (약 570MB, 느림)</option></select></div>
+          <div class="row gap8"><label class="small" for="s-callauto">자동 변환</label>
+            <select class="inp" id="s-callauto" style="width:auto;height:34px">${[1, 3, 7].map((d) => `<option value="${d}" ${cs.auto === d ? 'selected' : ''}>${d === 1 ? '오늘' : `최근 ${d}일`} 녹음</option>`).join('')}</select></div>
+          <label class="checkline small"><input type="checkbox" id="s-callfree" ${cs.free !== false ? 'checked' : ''}>변환 후 녹음 파일을 다시 '온라인 전용'으로 (PC 공간 확보)</label>
+          <div class="kv"><span>음성 인식</span><span class="small" id="s-callst">확인 중…</span><button type="button" class="btn" data-callinst hidden>설치</button></div>
+          <span class="note">녹음과 글은 PC 밖으로 나가지 않습니다. 글은 프로그램 데이터 폴더(calls)에만 저장됩니다.</span>`,
+      },
+      {
         id: 'app',
         icon: '⚙',
         title: '프로그램',
@@ -2214,6 +2231,23 @@ async function openSettings() {
           .map((x) => `<button type="button" class="setrow" data-page="${x.id}"><span class="si">${x.icon}</span><span class="st"><b>${h(x.title)}</b><small>${h(x.sum)}</small></span><span class="sc">›</span></button>`)
           .join('')}</div>`;
     renderUpdate();
+    if (page === 'calls') callStatusUI();
+  };
+  const callStatusUI = async () => {
+    const el2 = $('#s-callst', body);
+    if (!el2) return;
+    if (S.callInstall) {
+      el2.textContent = S.callInstall;
+      return;
+    }
+    const r = await window.api.calls.status({ model: callState().model });
+    if (!el2.isConnected) return;
+    const st = r.ok ? r.data : null;
+    S.callReady = !!st?.ready;
+    const btn = $('[data-callinst]', body);
+    el2.className = `small ${st?.ready ? 'ok' : 'muted'}`;
+    el2.textContent = !st ? `확인 실패: ${r.error}` : st.ready ? '준비됨 ✓' : `설치 필요 · ${st.cli ? '' : '프로그램 + '}모델 ${st.models[callState().model]?.size || ''}MB 내려받기`;
+    btn.hidden = !!st?.ready;
   };
   draw();
 
@@ -2223,6 +2257,22 @@ async function openSettings() {
       mailState().enabled = t.checked;
       save();
       if (t.checked) scanMail();
+      return;
+    }
+    if (t.id === 's-callon' || t.id === 's-callfree') {
+      callState()[t.id === 's-callon' ? 'on' : 'free'] = t.checked;
+      save();
+      if (t.id === 's-callon') {
+        S.callList = null;
+        loadCalls();
+      }
+      return;
+    }
+    if (t.id === 's-callmodel' || t.id === 's-callauto') {
+      callState()[t.id === 's-callmodel' ? 'model' : 'auto'] = t.id === 's-callmodel' ? t.value : +t.value;
+      save();
+      callStatusUI();
+      loadCalls();
       return;
     }
     if (t.id === 's-maildays') {
@@ -2272,6 +2322,34 @@ async function openSettings() {
     const ext = e.target.closest('[data-ext]');
     if (ext) return window.api.openExternal(ext.dataset.ext);
     if (e.target.closest('[data-page]')) return; // 페이지 이동은 아래(el)에서
+    if (e.target.closest('[data-calldir]')) {
+      const r = await window.api.calls.pickDir();
+      if (r.ok && r.data) {
+        callState().dir = r.data;
+        save();
+        S.callList = null;
+        loadCalls();
+        draw();
+      }
+      return;
+    }
+    const ib = e.target.closest('[data-callinst]');
+    if (ib) {
+      ib.disabled = true;
+      S.callInstall = '내려받는 중…';
+      callStatusUI();
+      const r = await window.api.calls.install({ model: callState().model });
+      S.callInstall = null;
+      if (!r.ok) toast(`설치하지 못했습니다: ${r.error}`);
+      else {
+        toast('음성 인식이 준비되었습니다. 최근 통화부터 글로 바꿉니다.');
+        S.callList = null;
+        loadCalls();
+      }
+      ib.disabled = false;
+      callStatusUI();
+      return;
+    }
     const kd = e.target.closest('[data-kwdel]');
     if (kd) {
       kwStore().w[kd.dataset.kwdel] = { s: 0, t: Date.now() };
@@ -3283,8 +3361,15 @@ async function init() {
   window.api.outlook.onPick?.(() => pickOutlookMail());
   window.api.clip?.onPick?.((d) => openClipChooser(d));
   bindMailView();
+  window.api.calls?.onProgress?.((p) => {
+    S.callInstall = `${p.step} ${p.total ? `${Math.round((p.got / p.total) * 100)}%` : `${Math.round(p.got / 1e6)}MB`}`;
+    const el2 = document.getElementById('s-callst');
+    if (el2) el2.textContent = S.callInstall;
+  });
   setTimeout(() => mailState().enabled && scanMail(), 20000); // 시작 20초 뒤 첫 확인
   setInterval(() => mailState().enabled && scanMail(), 30 * 60 * 1000); // 30분마다
+  setTimeout(loadCalls, 30000); // 통화 녹음: 시작 30초 뒤, 그 뒤 10분마다
+  setInterval(loadCalls, 10 * 60 * 1000);
 
   let lastDay = D.today();
   setInterval(() => {
@@ -3851,6 +3936,161 @@ async function loadSms() {
     if (mvVisible()) renderMailView();
   }
 }
+/* ───────────── 통화 녹음 → 글 (PC 안에서 whisper) ───────────── */
+function callState() {
+  S.data.calls ||= { on: true, dir: '', model: 'small', auto: 3, free: true, failed: {} };
+  const c = S.data.calls;
+  c.failed ||= {};
+  return c;
+}
+const isNum = (w) => /^[\d+\-\s]{7,}$/.test(w || '');
+const fmtPhone = (n) => {
+  const d = String(n).replace(/\D/g, '').replace(/^82/, '0');
+  return d.length === 11 ? `${d.slice(0, 3)}-${d.slice(3, 7)}-${d.slice(7)}` : d.length === 10 ? `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}` : d;
+};
+let callsBusy = false;
+let callLoading = false;
+async function loadCalls() {
+  const c = callState();
+  if (!c.on) {
+    S.callList = null;
+    return;
+  }
+  if (callsBusy || callLoading) return;
+  callLoading = true;
+  try {
+    const r = await window.api.calls.list({ dir: c.dir || undefined, days: Math.max(mvState().days, c.auto, 3) });
+    const res = r.ok ? r.data : { ok: false, code: 'error', error: r.error };
+    if (!res.ok) {
+      S.callList = [];
+      S.callErr = res.code === 'noDir' ? `통화 녹음 폴더가 없습니다: ${res.dir}` : `통화 녹음을 읽지 못했습니다: ${res.error || res.code}`;
+      return;
+    }
+    S.callErr = null;
+    S.callDir = res.dir;
+    const nums = res.files.map((f) => f.who).filter(isNum);
+    const cr = nums.length ? await window.api.phone.contacts(nums) : null;
+    const ppl = cr?.ok ? cr.data || {} : {};
+    S.callList = res.files.map((f) => {
+      const num = isNum(f.who) ? f.who : '';
+      const who = num ? ppl[num.replace(/\D/g, '').replace(/^82/, '0').slice(-8)] : null;
+      const old = (S.callList || []).find((y) => y.name === f.name);
+      if (old && old.body !== (f.text || '')) sumCache.delete(old.id);
+      return {
+        id: `call:${f.name}`,
+        source: 'call',
+        file: f.path,
+        name: f.name,
+        from: who?.name || (num ? fmtPhone(num) : f.who),
+        fromAddr: num,
+        contact: !!who || !num,
+        company: who?.company || '',
+        received: f.at,
+        subject: '',
+        body: f.text || '',
+        pending: f.text == null,
+        atts: [],
+        unread: false,
+      };
+    });
+  } finally {
+    callLoading = false;
+    renderMailSumBadge();
+    if (mvVisible()) renderMailView();
+  }
+  queueCalls();
+}
+/** m4a 등 → 16kHz 모노 WAV (Chromium 디코더 사용, PC 안에서) */
+async function toWav16k(u8) {
+  const ab = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+  const ctx = new OfflineAudioContext(1, 16000, 16000);
+  const buf = await ctx.decodeAudioData(ab);
+  const n = buf.length;
+  const chs = [...Array(buf.numberOfChannels)].map((_, i) => buf.getChannelData(i));
+  const out = new ArrayBuffer(44 + n * 2);
+  const dv = new DataView(out);
+  const str = (o, t) => [...t].forEach((ch, i) => dv.setUint8(o + i, ch.charCodeAt(0)));
+  str(0, 'RIFF');
+  dv.setUint32(4, 36 + n * 2, true);
+  str(8, 'WAVE');
+  str(12, 'fmt ');
+  dv.setUint32(16, 16, true);
+  dv.setUint16(20, 1, true);
+  dv.setUint16(22, 1, true);
+  dv.setUint32(24, 16000, true);
+  dv.setUint32(28, 32000, true);
+  dv.setUint16(32, 2, true);
+  dv.setUint16(34, 16, true);
+  str(36, 'data');
+  dv.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) {
+    let v = 0;
+    for (const d of chs) v += d[i];
+    v = Math.max(-1, Math.min(1, v / chs.length));
+    dv.setInt16(44 + i * 2, v < 0 ? v * 32768 : v * 32767, true);
+  }
+  return { wav: new Uint8Array(out), seconds: n / 16000 };
+}
+async function queueCalls() {
+  const c = callState();
+  if (callsBusy || !c.on || !S.callList?.length) return;
+  const st = await window.api.calls.status({ model: c.model });
+  S.callReady = !!(st.ok && st.data.ready);
+  if (!S.callReady) return;
+  const since = D.addDays(D.today(), -(c.auto - 1));
+  callsBusy = true;
+  try {
+    for (;;) {
+      const x = S.callList.find((m) => m.pending && (m.force || (!c.failed[m.name] && m.received.slice(0, 10) >= since)));
+      if (!x) break;
+      await transcribeCall(x);
+    }
+  } finally {
+    callsBusy = false;
+  }
+}
+async function transcribeCall(x) {
+  const c = callState();
+  x.busy = true;
+  if (mvVisible()) renderMailView();
+  try {
+    const a = await window.api.calls.audio(x.file);
+    if (!a.ok) throw new Error(a.error);
+    const { wav, seconds } = await toWav16k(a.data);
+    const r = await window.api.calls.transcribe({ name: x.name, file: x.file, wav, seconds, model: c.model, free: c.free !== false });
+    const res = r.ok ? r.data : { ok: false, error: r.error };
+    if (!res.ok) throw new Error(res.error || res.code);
+    x.body = res.text;
+    x.pending = false;
+    delete c.failed[x.name];
+    sumCache.delete(x.id);
+    // 일정 후보가 있으면 알림
+    const t = x.received.slice(0, 10);
+    const sm = summarize({ ...x }, t, x.received.slice(0, 16));
+    const due = sm.dues.find((d) => d.date && d.date >= D.today());
+    if (due && !x.force) {
+      try {
+        const n = new Notification(`통화에서 일정 후보: ${x.from}`, { body: `${dueTxt(due)} ${due.text || ''}`.slice(0, 120) });
+        n.onclick = () => {
+          window.api.focus?.();
+          MV.sel = x.id;
+          MV.src = 'call';
+          setAppTab('mail');
+        };
+      } catch {
+        /* 무시 */
+      }
+    }
+  } catch (e) {
+    c.failed[x.name] = String(e.message || e).slice(0, 200);
+  } finally {
+    x.busy = false;
+    x.force = false;
+    save();
+    renderMailSumBadge();
+    if (mvVisible()) renderMailView();
+  }
+}
 function mvClients() {
   return [...companyNames(), ...Object.values(mvState().domains)];
 }
@@ -3861,7 +4101,7 @@ function mvItems() {
   const now = `${today}T${String(nd.getHours()).padStart(2, '0')}:${String(nd.getMinutes()).padStart(2, '0')}`;
   const since = D.addDays(today, -(v.days - 1));
   const clients = mvClients();
-  const src = [...(S.mailList || []), ...(v.sms !== false ? S.smsList || [] : [])];
+  const src = [...(S.mailList || []), ...(v.sms !== false ? S.smsList || [] : []), ...(callState().on ? S.callList || [] : [])];
   return src
     .filter((m) => (m.received || '').slice(0, 10) >= since)
     .map((m) => {
@@ -3869,7 +4109,16 @@ function mvItems() {
       if (!x) {
         const mail = { ...m, body: [m.body || '', ...[].concat(m.attText || []).map((a) => a.text)].join('\n\n') };
         // 요지·요청은 본문, 기한·일정은 본문 + 첨부(attText)에서
-        x = { mail: m, sum: summarize(m, today, now), mailForCo: mail };
+        // 통화: "내일", "다음 주"는 통화한 날 기준
+        x = { mail: m, sum: m.source === 'call' ? summarize(m, m.received.slice(0, 10), m.received.slice(0, 16)) : summarize(m, today, now), mailForCo: mail };
+        if (m.source === 'call') {
+          // 통화: 인사·맞장구("여보세요", "네 안녕하세요")를 건너뛴 첫 내용 문장을 요지로
+          const chat = /여보세요|안녕하(세요|십니까)|수고(하세요|하셨|많으)|감사합니다|들어가세요|끊을게요|^(네|예|아|응|어|음|그래요|알겠습니다)[\s,.!?~]*$/;
+          const real = (x.sum.sentences || []).filter((t) => !chat.test(t) && t.replace(/^(네|예|아|어|음)[\s,]+/, '').length >= 6);
+          x.sum.gist = (real[0] || x.sum.gist || '').slice(0, 120);
+          x.sum.title = m.pending ? '통화 녹음' : (x.sum.gist || '통화 녹음').slice(0, 40);
+          if (x.sum.cat === 'auto') x.sum.cat = 'info';
+        }
         if (m.source === 'sms') {
           // 문자: 첫 줄을 제목으로, 연락처에 없는 [Web발신]은 알림으로
           x.sum.title = (m.subject || '').replace(/^\[[^\]]{1,12}\]\s*/, '') || '(문자)';
@@ -3886,6 +4135,10 @@ function mvItems() {
             ? { name: m.company, by: 'contact' }
             : companyOf(x.mailForCo, clients, v.domains);
       x.done = !!v.done[m.id];
+      if (m.source === 'call' && m.pending) {
+        const c = callState();
+        x.sum.gist = m.busy ? '⏳ 글로 바꾸는 중…' : c.failed[m.name] ? `변환 실패: ${c.failed[m.name]}` : S.callReady === false ? '음성 인식 준비 전 (설정 → 통화 녹음)' : m.received.slice(0, 10) >= D.addDays(today, -(c.auto - 1)) ? '변환 대기 중' : '아직 글로 바꾸지 않음';
+      }
       return x;
     })
     .sort((a, b) => (b.mail.received || '').localeCompare(a.mail.received || ''))
@@ -3917,6 +4170,7 @@ function setAppTab(t) {
     if (!S.smsList || Date.now() - (S.smsAt || 0) > 2 * 60000) {
       S.smsAt = Date.now();
       loadSms();
+      loadCalls();
     }
   } else renderAll();
 }
@@ -3944,8 +4198,10 @@ function renderMailView() {
   const byCo = shown0.filter((x) => !MV.co || (MV.co === '__none' ? !x.co.name : x.co.name === MV.co));
   const q = MV.q.trim().toLowerCase();
   const byQ0 = q ? byCo.filter((x) => `${x.mail.from} ${x.mail.subject} ${x.sum.gist} ${x.co.name}`.toLowerCase().includes(q)) : byCo;
-  const srcCnt = { all: byQ0.length, mail: byQ0.filter((x) => x.mail.source !== 'sms').length, sms: byQ0.filter((x) => x.mail.source === 'sms').length };
-  const byQ = MV.src === 'all' ? byQ0 : byQ0.filter((x) => (MV.src === 'sms') === (x.mail.source === 'sms'));
+  const srcOf = (x) => (x.mail.source === 'sms' || x.mail.source === 'call' ? x.mail.source : 'mail');
+  const srcCnt = { all: byQ0.length, mail: 0, sms: 0, call: 0 };
+  for (const x of byQ0) srcCnt[srcOf(x)]++;
+  const byQ = MV.src === 'all' ? byQ0 : byQ0.filter((x) => srcOf(x) === MV.src);
   const cnt = { all: byQ.length, request: 0, due: 0, info: 0, auto: 0 };
   for (const x of byQ) cnt[x.sum.cat]++;
   const list = byQ.filter((x) => MV.cat === 'all' || x.sum.cat === MV.cat);
@@ -3966,7 +4222,7 @@ function renderMailView() {
         .join('')}
       <input class="inp mv-q" id="mv-q" placeholder="🔍 보낸 사람·제목 검색" value="${h(MV.q)}">
       <label class="checkline small"><input type="checkbox" id="mv-done" ${MV.showDone ? 'checked' : ''}>완료한 메일도 보기</label>
-      <div class="spacer"></div>${S.smsErr && MV.src !== 'mail' ? `<span class="small muted" title="${h(S.smsErr)}">💬 문자 없음</span>` : ''}<span class="small muted">${h(status)}</span>
+      <div class="spacer"></div>${S.smsErr && MV.src !== 'mail' ? `<span class="small muted" title="${h(S.smsErr)}">💬 문자 없음</span>` : ''}${callsBusy ? '<span class="small muted">📞 통화 글로 바꾸는 중…</span>' : ''}<span class="small muted">${h(status)}</span>
       <button type="button" class="btn" data-mvrefresh ${S.mailLoading ? 'disabled' : ''}>↻ 새로고침</button>
     </div>`;
   if (!S.mailList && !S.smsList) {
@@ -3985,9 +4241,9 @@ function renderMailView() {
       const ats = x.sum.atts.length;
       return `${head}<div class="mv-item ${MV.sel === x.mail.id ? 'cur' : ''} ${x.done ? 'done' : ''}" data-mvid="${h(x.mail.id)}">
         <span class="mv-cat c-${x.sum.cat}">${h(x.sum.cat === 'due' ? '기한' : CAT_LABEL[x.sum.cat])}</span>
-        <div class="mv-it"><div class="mv-r1"><b>${x.mail.source === 'sms' ? '💬 ' : ''}${h(x.mail.from || '')}</b><span>${x.more ? `<i class="mv-more">+${x.more}</i> ` : ''}${h((x.mail.received || '').slice(11, 16))}${x.done ? ' ✓완료' : ''}</span></div>
+        <div class="mv-it"><div class="mv-r1"><b>${x.mail.source === 'sms' ? '💬 ' : x.mail.source === 'call' ? '📞 ' : ''}${h(x.mail.from || '')}</b><span>${x.more ? `<i class="mv-more">+${x.more}</i> ` : ''}${h((x.mail.received || '').slice(11, 16))}${x.done ? ' ✓완료' : ''}</span></div>
           <div class="mv-sub ${x.mail.unread ? '' : 'read'}">${h(x.sum.title)}</div>
-          ${x.sum.gist ? `<div class="mv-g">${h(x.sum.gist)}</div>` : ''}
+          ${x.sum.gist && !x.sum.gist.startsWith(x.sum.title.replace(/…$/, '')) ? `<div class="mv-g">${h(x.sum.gist)}</div>` : ''}
           <div class="mv-tags">${x.co.name ? `<span class="mv-co-t">${h(x.co.name)}</span>` : ''}${due ? `<span class="mv-tag d">📅 ${h(dueTxt(due))}</span>` : ''}${ats ? `<span class="mv-tag">📎 ${ats === 1 ? h(x.sum.atts[0]) : ats}</span>` : ''}${x.sum.requests.length ? `<span class="mv-tag">요청 ${x.sum.requests.length}</span>` : ''}</div>
         </div></div>`;
     })
@@ -4000,12 +4256,18 @@ function renderMailView() {
     const hits = x.sum.dues.flatMap((d) => d.hits || []);
     const readAtts = new Set([].concat(x.mail.attText || []).map((a) => a.name));
     det = `<div class="mv-dh"><div style="flex:1;min-width:0"><h2>${h(x.sum.title)}</h2>
-        <div class="mv-m">${x.co.name ? `<span class="mv-co-t">${h(x.co.name)}</span> ` : ''}${h(x.mail.from || '')}${x.mail.fromAddr && !/^\/o=/i.test(x.mail.fromAddr) && x.mail.fromAddr !== x.mail.from ? ` &lt;${h(x.mail.fromAddr)}&gt;` : ''} · ${h(fmtDay((x.mail.received || '').slice(0, 10)).replace(/^(오늘|어제) · /, ''))} ${h((x.mail.received || '').slice(11, 16))} · <button type="button" class="linkbtn" data-mvco>${x.co.name ? '회사 바꾸기' : '회사 지정'}</button></div></div>
-        ${x.mail.source === 'sms' ? '<span class="mv-tag" style="align-self:center">💬 휴대폰 문자</span>' : '<button type="button" class="btn" data-mvopen>Outlook에서 열기</button>'}
+        <div class="mv-m">${x.co.name ? `<span class="mv-co-t">${h(x.co.name)}</span> ` : ''}${h(x.mail.from || '')}${x.mail.source === 'call' ? (x.mail.fromAddr && x.mail.from !== fmtPhone(x.mail.fromAddr) ? ` (${h(fmtPhone(x.mail.fromAddr))})` : '') : x.mail.fromAddr && !/^\/o=/i.test(x.mail.fromAddr) && x.mail.fromAddr !== x.mail.from ? ` &lt;${h(x.mail.fromAddr)}&gt;` : ''} · ${h(fmtDay((x.mail.received || '').slice(0, 10)).replace(/^(오늘|어제) · /, ''))} ${h((x.mail.received || '').slice(11, 16))} · <button type="button" class="linkbtn" data-mvco>${x.co.name ? '회사 바꾸기' : '회사 지정'}</button></div></div>
+        ${
+          x.mail.source === 'sms'
+            ? '<span class="mv-tag" style="align-self:center">💬 휴대폰 문자</span>'
+            : x.mail.source === 'call'
+              ? `${x.mail.pending && !x.mail.busy ? '<button type="button" class="btn" data-mvconv>글로 바꾸기</button>' : ''}<button type="button" class="btn" data-mvplay>▶ 녹음 듣기</button>`
+              : '<button type="button" class="btn" data-mvopen>Outlook에서 열기</button>'
+        }
         <button type="button" class="btn ${x.done ? '' : 'primary'}" data-mvdone>${x.done ? '완료 취소' : '✓ 완료'}</button></div>
       <div class="mv-scroll">
       <div class="mv-sum">
-        <div><h4>${x.mail.source === 'sms' ? '최근 문자 요지' : '요지'}</h4><div class="mv-gist">${h(x.sum.gist || '(본문 없음)')}</div></div>
+        <div><h4>${x.mail.source === 'sms' ? '최근 문자 요지' : x.mail.source === 'call' ? '통화 요지' : '요지'}</h4><div class="mv-gist">${h(x.sum.gist || '(본문 없음)')}</div></div>
         ${x.sum.requests.length ? `<div><h4>요청 사항</h4><ul>${x.sum.requests.map((r) => `<li>${h(r)}</li>`).join('')}</ul></div>` : ''}
         ${
           x.sum.dues.length
@@ -4020,7 +4282,7 @@ function renderMailView() {
         ${x.sum.atts.length ? `<div><h4>첨부</h4><div class="mv-att">${x.sum.atts.map((n) => `<span>📎 ${h(n)}${readAtts.has(n) ? ' · 읽음' : ''}</span>`).join('')}</div></div>` : ''}
       </div>
       ${x.mail.source === 'sms' ? `<div class="mv-thread" id="mv-thread" data-tid="${h(x.mail.id)}"><div class="mv-th-h">대화 기록 · ${h(x.mail.from || '')}</div><div class="muted small" style="padding:10px">불러오는 중…</div></div>` : ''}
-      <details class="mv-orig" ${x.mail.source === 'sms' ? '' : 'open'}><summary>원문</summary><div>${highlightHtml((mb?.body || stripQuoted(x.mail.body || '')).slice(0, 6000), hits, h)}</div>${[].concat(x.mail.attText || [])
+      <details class="mv-orig" ${x.mail.source === 'sms' ? '' : 'open'}><summary>${x.mail.source === 'call' ? '통화 내용 (자동 변환, 틀린 부분이 있을 수 있음)' : '원문'}</summary><div>${highlightHtml((mb?.body || stripQuoted(x.mail.body || '')).slice(0, 6000), hits, h)}</div>${[].concat(x.mail.attText || [])
         .map((a) => `<div class="mv-attt">📎 ${h(a.name)}</div><div>${highlightHtml(a.text.slice(0, 3000), hits, h)}</div>`)
         .join('')}</details>
       </div>
@@ -4031,6 +4293,7 @@ function renderMailView() {
         ['all', '전체'],
         ['mail', '✉ 메일'],
         ['sms', '💬 문자'],
+        ...(callState().on ? [['call', '📞 통화']] : []),
       ]
         .map(([k, l]) => `<button type="button" class="${MV.src === k ? 'on' : ''}" data-mvsrc="${k}">${l}<em>${srcCnt[k]}</em></button>`)
         .join('')}</div>
@@ -4040,7 +4303,7 @@ function renderMailView() {
           .map(([n, c]) => `<option value="${h(n)}" ${MV.co === n ? 'selected' : ''}>🏢 ${h(n)} (${c})</option>`)
           .join('')}${coCount.get('') ? `<option value="__none" ${MV.co === '__none' ? 'selected' : ''}>회사 미확인 (${coCount.get('')})</option>` : ''}</select>
       </div></div>`;
-  html += `<div class="mv-body"><div class="mv-list">${lhead}<div class="mv-ls">${items || `<div class="mv-empty small">해당하는 ${MV.src === 'sms' ? '문자' : MV.src === 'mail' ? '메일' : '메일·문자'}가 없습니다.</div>`}</div></div><div class="mv-detail">${det}</div></div>`;
+  html += `<div class="mv-body"><div class="mv-list">${lhead}<div class="mv-ls">${items || `<div class="mv-empty small">해당하는 ${MV.src === 'sms' ? '문자' : MV.src === 'mail' ? '메일' : MV.src === 'call' ? '통화 녹음' : '메일·문자'}가 없습니다.${MV.src === 'call' && S.callErr ? `<br>${h(S.callErr)}` : ''}</div>`}</div></div><div class="mv-detail">${det}</div></div>`;
   const keepScroll = root.querySelector('.mv-ls')?.scrollTop || 0;
   const focusQ = document.activeElement?.id === 'mv-q';
   root.innerHTML = html;
@@ -4058,7 +4321,7 @@ function mvCurrent() {
 }
 function mvMake(kind, x, due) {
   const d = due || x.sum.dues.find((y) => y.date) || null;
-  const memo = `${x.mail.source === 'sms' ? '문자' : '메일'}: ${x.mail.subject || ''}\n보낸 사람: ${x.mail.from || ''} (${(x.mail.received || '').slice(0, 16).replace('T', ' ')})${x.sum.gist ? `\n${x.sum.gist}` : ''}`;
+  const memo = `${x.mail.source === 'sms' ? '문자' : x.mail.source === 'call' ? '통화' : '메일'}: ${x.mail.subject || x.sum.title || ''}\n${x.mail.source === 'call' ? '통화 상대' : '보낸 사람'}: ${x.mail.from || ''} (${(x.mail.received || '').slice(0, 16).replace('T', ' ')})${x.sum.gist ? `\n${x.sum.gist}` : ''}`;
   const title = x.co.name && !x.sum.title.includes(x.co.name) ? `${x.co.name} ${x.sum.title}` : x.sum.title;
   if (kind === 'todo') return openTodoDialog(null, { title, due: d?.date || null, time: d?.startTime || '', memo });
   const st = d?.startTime || '09:00';
@@ -4137,6 +4400,7 @@ function bindMailView() {
     if (e.target.closest('[data-mvrefresh]')) {
       S.smsAt = Date.now();
       loadSms();
+      loadCalls();
       return scanMail(true, true);
     }
     const x = mvCurrent();
@@ -4156,6 +4420,16 @@ function bindMailView() {
       return;
     }
     if (e.target.closest('[data-mvco]')) return mvSetCompany(x);
+    if (e.target.closest('[data-mvplay]')) return window.api.calls.openFile(x.mail.file);
+    if (e.target.closest('[data-mvconv]')) {
+      const m = S.callList?.find((y) => y.id === x.mail.id);
+      if (!m) return;
+      const st = await window.api.calls.status({ model: callState().model });
+      if (!st.ok || !st.data.ready) return toast('먼저 설정 → 통화 녹음에서 음성 인식을 설치하세요.');
+      m.force = true;
+      delete callState().failed[m.name];
+      return queueCalls();
+    }
     const du = e.target.closest('[data-mvdue]');
     if (du) return mvMake(du.dataset.mvdue, x, x.sum.dues[+du.dataset.i]);
     const mk = e.target.closest('[data-mvmk]');
@@ -4167,6 +4441,7 @@ function bindMailView() {
       v.days = +e.target.value;
       save();
       if (v.days > mailState().days && Date.now() - (S.mailListAt || 0) > 0) scanMail(true, true);
+      loadCalls();
       renderMailView();
     } else if (e.target.id === 'mv-src') {
       MV.src = e.target.value;

@@ -276,6 +276,26 @@ app.whenReady().then(() => {
   ipcMain.handle('outlook:open', wrap((id) => require('./outlook').openItem(id)));
   ipcMain.handle('phone:messages', wrap((opt) => require('./phonelink').readMessages(opt || {})));
   ipcMain.handle('phone:thread', wrap((opt) => require('./phonelink').readThread(opt || {})));
+  ipcMain.handle('phone:contacts', wrap((nums) => require('./phonelink').lookupContacts(nums || [])));
+  // 통화 녹음 → 글 (PC 안에서)
+  const calls = require('./calls');
+  calls.init(app.getPath('userData'));
+  ipcMain.handle('calls:list', wrap((opt) => calls.list(opt || {})));
+  ipcMain.handle('calls:status', wrap((opt) => calls.status(opt || {})));
+  ipcMain.handle(
+    'calls:install',
+    wrap((opt) => calls.install(opt || {}, (p) => win && !win.isDestroyed() && win.webContents.send('calls:progress', p)))
+  );
+  ipcMain.handle('calls:audio', wrap((file) => calls.readAudio(file)));
+  ipcMain.handle('calls:transcribe', wrap((opt) => calls.transcribe(opt || {})));
+  ipcMain.handle('calls:openFile', wrap((file) => shell.openPath(file)));
+  ipcMain.handle(
+    'calls:pickDir',
+    wrap(async () => {
+      const r = await dialog.showOpenDialog(win, { title: '통화 녹음 폴더 선택', defaultPath: calls.defaultDir(), properties: ['openDirectory'] });
+      return r.canceled ? null : r.filePaths[0];
+    })
+  );
   // Outlook에서 메일을 고른 채 Ctrl+Shift+E → 이 프로그램이 앞으로 나와 그 메일로 일정/할 일 만들기
   try {
     let hotBusy = false;
