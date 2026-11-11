@@ -4241,7 +4241,7 @@ function renderMailView() {
         .join('')}
       <input class="inp mv-q" id="mv-q" placeholder="🔍 보낸 사람·제목 검색" value="${h(MV.q)}">
       <label class="checkline small"><input type="checkbox" id="mv-done" ${MV.showDone ? 'checked' : ''}>완료한 메일도 보기</label>
-      <div class="spacer"></div>${S.smsErr && MV.src !== 'mail' ? `<span class="small muted" title="${h(S.smsErr)}">💬 문자 없음</span>` : ''}${callsBusy ? `<span class="small muted">📞 통화 글로 바꾸는 중… ${callLeft() > 1 ? `(남은 ${callLeft()}개)` : ''}</span>` : ''}<span class="small muted">${h(status)}</span>
+      <div class="spacer"></div>${S.smsErr && MV.src !== 'mail' ? `<span class="small muted" title="${h(S.smsErr)}">문자 없음</span>` : ''}${callsBusy ? `<span class="small muted">통화 글로 바꾸는 중… ${callLeft() > 1 ? `(남은 ${callLeft()}개)` : ''}</span>` : ''}<span class="small muted">${h(status)}</span>
       <button type="button" class="btn" data-mvrefresh ${S.mailLoading ? 'disabled' : ''}>↻ 새로고침</button>
     </div>`;
   if (!S.mailList && !S.smsList) {
@@ -4259,9 +4259,9 @@ function renderMailView() {
       const due = x.sum.dues.find((y) => y.date);
       const ats = x.sum.atts.length;
       const pick = MV.pick && x.mail.source === 'call';
-      return `${head}<div class="mv-item ${MV.sel === x.mail.id && !MV.pick ? 'cur' : ''} ${x.done ? 'done' : ''} ${pick && MV.pick.has(x.mail.id) ? 'picked' : ''}" data-mvid="${h(x.mail.id)}">
+      return `${head}<div data-src="${srcOf(x)}" class="mv-item ${MV.sel === x.mail.id && !MV.pick ? 'cur' : ''} ${x.done ? 'done' : ''} ${pick && MV.pick.has(x.mail.id) ? 'picked' : ''}" data-mvid="${h(x.mail.id)}">
         ${pick ? `<input type="checkbox" class="mv-pick" tabindex="-1" ${MV.pick.has(x.mail.id) ? 'checked' : ''}>` : ''}<span class="mv-cat c-${x.sum.cat}">${h(x.sum.cat === 'due' ? '기한' : CAT_LABEL[x.sum.cat])}</span>
-        <div class="mv-it"><div class="mv-r1"><b>${x.mail.source === 'sms' ? '💬 ' : x.mail.source === 'call' ? '📞 ' : ''}${h(x.mail.from || '')}</b><span>${x.more ? `<i class="mv-more">+${x.more}</i> ` : ''}${h((x.mail.received || '').slice(11, 16))}${x.done ? ' ✓완료' : ''}</span></div>
+        <div class="mv-it"><div class="mv-r1"><b>${srcIcon(srcOf(x))}${h(x.mail.from || '')}</b><span>${x.more ? `<i class="mv-more">+${x.more}</i> ` : ''}${h((x.mail.received || '').slice(11, 16))}${x.done ? ' ✓완료' : ''}</span></div>
           <div class="mv-sub ${x.mail.unread ? '' : 'read'}">${h(x.sum.title)}</div>
           ${x.sum.gist && !x.sum.gist.startsWith(x.sum.title.replace(/…$/, '')) ? `<div class="mv-g">${h(x.sum.gist)}</div>` : ''}
           <div class="mv-tags">${x.co.name ? `<span class="mv-co-t">${h(x.co.name)}</span>` : ''}${due ? `<span class="mv-tag d">📅 ${h(dueTxt(due))}</span>` : ''}${ats ? `<span class="mv-tag">📎 ${ats === 1 ? h(x.sum.atts[0]) : ats}</span>` : ''}${x.sum.requests.length ? `<span class="mv-tag">요청 ${x.sum.requests.length}</span>` : ''}</div>
@@ -4279,7 +4279,7 @@ function renderMailView() {
         <div class="mv-m">${x.co.name ? `<span class="mv-co-t">${h(x.co.name)}</span> ` : ''}${h(x.mail.from || '')}${x.mail.source === 'call' ? (x.mail.fromAddr && x.mail.from !== fmtPhone(x.mail.fromAddr) ? ` (${h(fmtPhone(x.mail.fromAddr))})` : '') : x.mail.fromAddr && !/^\/o=/i.test(x.mail.fromAddr) && x.mail.fromAddr !== x.mail.from ? ` &lt;${h(x.mail.fromAddr)}&gt;` : ''} · ${h(fmtDay((x.mail.received || '').slice(0, 10)).replace(/^(오늘|어제) · /, ''))} ${h((x.mail.received || '').slice(11, 16))} · <button type="button" class="linkbtn" data-mvco>${x.co.name ? '회사 바꾸기' : '회사 지정'}</button></div></div>
         ${
           x.mail.source === 'sms'
-            ? '<span class="mv-tag" style="align-self:center">💬 휴대폰 문자</span>'
+            ? `<span class="mv-srcpill">${srcIcon('sms')}휴대폰 문자</span>`
             : x.mail.source === 'call'
               ? `${x.mail.busy ? '' : x.mail.pending ? '<button type="button" class="btn" data-mvconv>글로 바꾸기</button>' : '<button type="button" class="btn" data-mvconv title="목소리 구분까지 다시">다시 바꾸기</button>'}<button type="button" class="btn" data-mvplay>▶ 녹음 듣기</button>`
               : '<button type="button" class="btn" data-mvopen>Outlook에서 열기</button>'
@@ -4312,11 +4312,11 @@ function renderMailView() {
   const lhead = `<div class="mv-lh">
       <div class="mv-stabs">${[
         ['all', '전체'],
-        ['mail', '✉ 메일'],
-        ['sms', '💬 문자'],
-        ...(callState().on ? [['call', '📞 통화']] : []),
+        ['mail', '메일'],
+        ['sms', '문자'],
+        ...(callState().on ? [['call', '통화']] : []),
       ]
-        .map(([k, l]) => `<button type="button" class="${MV.src === k ? 'on' : ''}" data-mvsrc="${k}">${l}<em>${srcCnt[k]}</em></button>`)
+        .map(([k, l]) => `<button type="button" class="${MV.src === k ? 'on' : ''}" data-mvsrc="${k}" data-src="${k}">${k === 'all' ? '' : srcIcon(k)}${l}<em>${srcCnt[k]}</em></button>`)
         .join('')}</div>
       ${
         MV.src === 'call'
@@ -4333,7 +4333,7 @@ function renderMailView() {
           .map(([n, c]) => `<option value="${h(n)}" ${MV.co === n ? 'selected' : ''}>🏢 ${h(n)} (${c})</option>`)
           .join('')}${coCount.get('') ? `<option value="__none" ${MV.co === '__none' ? 'selected' : ''}>회사 미확인 (${coCount.get('')})</option>` : ''}</select>
       </div></div>`;
-  html += `<div class="mv-body"><div class="mv-list">${lhead}<div class="mv-ls">${items || `<div class="mv-empty small">해당하는 ${MV.src === 'sms' ? '문자' : MV.src === 'mail' ? '메일' : MV.src === 'call' ? '통화 녹음' : '메일·문자'}가 없습니다.${MV.src === 'call' && S.callErr ? `<br>${h(S.callErr)}` : ''}</div>`}</div></div><div class="mv-detail">${det}</div></div>`;
+  html += `<div class="mv-body"><div class="mv-list">${lhead}<div class="mv-ls">${items || `<div class="mv-empty small">해당하는 ${MV.src === 'sms' ? '문자' : MV.src === 'mail' ? '메일' : MV.src === 'call' ? '통화 녹음' : '메일·문자'}가 없습니다.${MV.src === 'call' && S.callErr ? `<br>${h(S.callErr)}` : ''}</div>`}</div></div><div class="mv-detail" ${x ? `data-src="${srcOf(x)}"` : ''}>${det}</div></div>`;
   const keepScroll = root.querySelector('.mv-ls')?.scrollTop || 0;
   const focusQ = document.activeElement?.id === 'mv-q';
   root.innerHTML = html;
@@ -4346,6 +4346,13 @@ function renderMailView() {
     qi.setSelectionRange(qi.value.length, qi.value.length);
   }
 }
+/** 메일·문자·통화 아이콘 (색은 CSS의 출처 색) */
+const SRC_ICON = {
+  mail: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 7l8 6 8-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>',
+  sms: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 4v-4h0A2.5 2.5 0 0 1 4 13.5z" fill="currentColor"/></svg>',
+  call: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.6 3.5l2.6.4 1.4 4.1-1.9 1.6a12 12 0 0 0 5.7 5.7l1.6-1.9 4.1 1.4.4 2.6c-.2 1.5-1.6 2.6-3.1 2.5C10 19.4 4.6 14 4.1 6.6 4 5.1 5.1 3.7 6.6 3.5z" fill="currentColor"/></svg>',
+};
+const srcIcon = (k) => `<i class="mv-ico" data-src="${k}">${SRC_ICON[k] || ''}</i>`;
 /** 통화 말풍선: 나(오른쪽 파랑) / 상대(왼쪽 회색) */
 function callBubbles(m) {
   const spks = [...new Set(m.lines.map((l) => l.spk).filter((v) => v != null))];
