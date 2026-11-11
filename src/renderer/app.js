@@ -2213,7 +2213,7 @@ async function openSettings(startPage = null) {
         title: 'AI 요약',
         sum: aiState().on ? '켬 · Claude Haiku' : '끔',
         html: () => `
-          <label class="checkline small"><input type="checkbox" id="s-aion" ${aiState().on ? 'checked' : ''}>메일·문자·통화를 AI(Claude)로 요약 · 새로 온 것 자동</label>
+          <label class="checkline small"><input type="checkbox" id="s-aion" ${aiState().on ? 'checked' : ''}>메일·문자·통화를 AI(Claude)로 요약 · 켠 뒤로 받은 것만 자동</label>${aiState().on && aiState().since ? `<span class="note">${h(aiState().since.slice(5, 16).replace('-', '/').replace('T', ' '))} 이후 받은 것부터 요약 중</span>` : ''}
           <label class="checkline small"><input type="checkbox" id="s-aimask" ${aiState().mask !== false ? 'checked' : ''}>개인정보 가리고 보내기 (주민·카드·전화·계좌번호, 이메일, 보낸 사람 주소)</label>
           <div class="fld"><label class="lbl" for="s-aikey">Claude API 키</label>
             <div class="row gap8"><input class="inp" id="s-aikey" type="password" autocomplete="off" placeholder="sk-ant-… (붙여 넣기)" style="flex:1;height:34px"><button type="button" class="btn" data-aikey>저장</button><button type="button" class="btn" data-aidel>지우기</button></div></div>
@@ -4168,12 +4168,18 @@ async function transcribeCall(x) {
 function aiState() {
   S.data.ai ||= { on: false, mask: true };
   if (S.data.ai.mask === undefined) S.data.ai.mask = true;
+  if (S.data.ai.on && !S.data.ai.since) S.data.ai.since = nowLocal(); // 켠 시각 이후에 받은 것만
   return S.data.ai;
 }
 const aiRes = new Map(); // id → { sum } | { err }
+const nowLocal = () => {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+};
 let aiBusy = false;
 const aiTargets = () =>
-  S.mailList || S.smsList || S.callList ? mvItems().filter((x) => x.rule.cat !== 'auto' && !(x.mail.source === 'call' && x.mail.pending) && !aiRes.has(x.mail.id)) : [];
+  S.mailList || S.smsList || S.callList ?  mvItems().filter((x) => (x.mail.received || '') >= (aiState().since || '9999') && x.rule.cat !== 'auto' && !(x.mail.source === 'call' && x.mail.pending) && !aiRes.has(x.mail.id)) : [];
 const aiLeft = () => aiTargets().length;
 function aiToSum(r, rule) {
   const dues = (r.dues || [])
@@ -4227,6 +4233,7 @@ async function aiToggle(on) {
     }
   }
   aiState().on = on;
+  if (on) aiState().since = nowLocal(); // 켠 뒤로 받은 것만 AI로
   S.aiErr = null;
   save();
   for (const x of sumCache.values()) x.aiSum = null;
