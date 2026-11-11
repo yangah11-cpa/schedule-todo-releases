@@ -594,7 +594,12 @@ function renderUpdate() {
     b.title = '프로그램을 다시 시작하면서 업데이트합니다. 지금 누르지 않아도 프로그램을 닫을 때 자동으로 설치됩니다.';
   }
   const el = $('#updMsg');
-  if (el) el.textContent = `${UPDATE_TEXT[u.status] || ''}${u.status === 'error' && u.error ? `: ${u.error}` : ''}${['downloading', 'ready'].includes(u.status) && u.version ? ` (${u.version})` : ''}`;
+  if (el) {
+    // 상단 "변경사항 적용"과 같은 상태를 보여 줌
+    if (S.patchReady) el.innerHTML = `새 변경사항 <b>${h(S.patchReady)}</b> 준비됨 <button type="button" class="btn primary" data-applynow style="height:28px;margin-left:6px">지금 적용</button>`;
+    else if (u.status === 'ready' && b && !b.hidden) el.innerHTML = `새 버전 <b>${h(u.version || '')}</b> 준비됨 <button type="button" class="btn primary" data-applynow style="height:28px;margin-left:6px">지금 설치</button>`;
+    else el.textContent = `${UPDATE_TEXT[u.status] || ''}${u.status === 'error' && u.error ? `: ${u.error}` : ''}${u.status === 'downloading' && u.version ? ` (${u.version})` : ''}`;
+  }
 }
 
 function renderAll() {
@@ -2188,11 +2193,11 @@ async function openSettings() {
         id: 'app',
         icon: '⚙',
         title: '프로그램',
-        sum: `버전 ${ver}${prefs.autoStart ? ' · 자동 실행' : ''}`,
+        sum: `버전 ${ver}${S.patchReady ? ` · 새 변경사항 ${S.patchReady} 준비됨` : ''}${prefs.autoStart ? ' · 자동 실행' : ''}`,
         html: () => `
           <label class="checkline small"><input type="checkbox" id="s-autostart" ${prefs.autoStart ? 'checked' : ''}>Windows 시작 시 자동 실행</label>
           <label class="checkline small"><input type="checkbox" id="s-tray" ${prefs.closeToTray ? 'checked' : ''}>창을 닫아도 트레이에서 실행 (알림 받기)</label>
-          <div class="row gap8 wrap" style="margin-top:6px"><span class="small">버전 ${h(ver)}${info?.source === 'patch' ? ` <span class="muted">(설치본 ${h(info.bundledVersion)})</span>` : ''}</span><button type="button" class="btn" data-updcheck>업데이트 확인</button><span class="small muted" id="updMsg"></span></div>
+          <div class="row gap8 wrap" style="margin-top:6px"><span class="small">현재 버전 ${h(ver)}${info?.source === 'patch' ? ` <span class="muted">(설치본 ${h(info.bundledVersion)})</span>` : ''}</span><button type="button" class="btn" data-updcheck>업데이트 확인</button><span class="small muted" id="updMsg"></span></div>
           <div class="row gap8 wrap" style="margin-top:6px"><span class="small">데이터</span><button type="button" class="btn" data-export>백업</button><button type="button" class="btn" data-import>복원</button></div>
           <span class="note">할 일과 "이 PC에만" 일정은 이 컴퓨터에 저장됩니다.</span>`,
       },
@@ -2358,7 +2363,9 @@ async function openSettings() {
       draw();
       renderAll();
     }
+    if (e.target.closest('[data-applynow]')) return $('#btnUpdate').click();
     if (e.target.closest('[data-updcheck]')) {
+      S.patchReady = (await window.api.patch.state()) || S.patchReady;
       S.update = { ...(S.update || {}), status: 'checking' };
       renderUpdate();
       S.update = await window.api.update.check();
