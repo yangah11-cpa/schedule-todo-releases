@@ -2246,8 +2246,14 @@ async function openSettings() {
     S.callReady = !!st?.ready;
     const btn = $('[data-callinst]', body);
     el2.className = `small ${st?.ready ? 'ok' : 'muted'}`;
-    el2.textContent = !st ? `확인 실패: ${r.error}` : st.ready ? '준비됨 ✓' : `설치 필요 · ${st.cli ? '' : '프로그램 + '}모델 ${st.models[callState().model]?.size || ''}MB 내려받기`;
-    btn.hidden = !!st?.ready;
+    el2.textContent = !st
+      ? `확인 실패: ${r.error}`
+      : st.ready && st.diar
+        ? '준비됨 ✓ (목소리 구분 포함)'
+        : st.ready
+          ? '글 변환 준비됨 · 목소리 구분(약 70MB) 설치 필요'
+          : `설치 필요 · ${st.cli ? '' : '프로그램 + '}모델 ${st.models[callState().model]?.size || ''}MB + 목소리 구분 약 70MB`;
+    btn.hidden = !!(st?.ready && st?.diar);
   };
   draw();
 
@@ -3975,7 +3981,7 @@ async function loadCalls() {
       const num = isNum(f.who) ? f.who : '';
       const who = num ? ppl[num.replace(/\D/g, '').replace(/^82/, '0').slice(-8)] : null;
       const old = (S.callList || []).find((y) => y.name === f.name);
-      if (old && old.body !== (f.text || '')) sumCache.delete(old.id);
+      if (old && (old.body !== (f.text || '') || old.me !== f.me)) sumCache.delete(old.id);
       return {
         id: `call:${f.name}`,
         source: 'call',
@@ -3988,7 +3994,11 @@ async function loadCalls() {
         received: f.at,
         subject: '',
         body: f.text || '',
+        lines: f.lines || null,
+        me: f.me,
+        meBy: f.meBy,
         pending: f.text == null,
+        busy: old?.busy,
         atts: [],
         unread: false,
       };
@@ -4031,6 +4041,11 @@ async function toWav16k(u8) {
   }
   return { wav: new Uint8Array(out), seconds: n / 16000 };
 }
+const callLeft = () => {
+  const c = callState();
+  const since = D.addDays(D.today(), -(c.auto - 1));
+  return (S.callList || []).filter((m) => m.busy || m.redo || (m.pending && (m.force || (!c.failed[m.name] && m.received.slice(0, 10) >= since)))).length;
+};
 async function queueCalls() {
   const c = callState();
   if (callsBusy || !c.on || !S.callList?.length) return;
@@ -4041,7 +4056,7 @@ async function queueCalls() {
   callsBusy = true;
   try {
     for (;;) {
-      const x = S.callList.find((m) => m.pending && (m.force || (!c.failed[m.name] && m.received.slice(0, 10) >= since)));
+      const x = S.callList.find((m) => !m.busy && (m.redo || (m.pending && (m.force || (!c.failed[m.name] && m.received.slice(0, 10) >= since)))));
       if (!x) break;
       await transcribeCall(x);
     }
@@ -4061,6 +4076,9 @@ async function transcribeCall(x) {
     const res = r.ok ? r.data : { ok: false, error: r.error };
     if (!res.ok) throw new Error(res.error || res.code);
     x.body = res.text;
+    x.lines = res.lines || null;
+    x.me = res.me;
+    x.meBy = null;
     x.pending = false;
     delete c.failed[x.name];
     sumCache.delete(x.id);
@@ -4086,6 +4104,7 @@ async function transcribeCall(x) {
   } finally {
     x.busy = false;
     x.force = false;
+    x.redo = false;
     save();
     renderMailSumBadge();
     if (mvVisible()) renderMailView();
@@ -4222,7 +4241,7 @@ function renderMailView() {
         .join('')}
       <input class="inp mv-q" id="mv-q" placeholder="🔍 보낸 사람·제목 검색" value="${h(MV.q)}">
       <label class="checkline small"><input type="checkbox" id="mv-done" ${MV.showDone ? 'checked' : ''}>완료한 메일도 보기</label>
-      <div class="spacer"></div>${S.smsErr && MV.src !== 'mail' ? `<span class="small muted" title="${h(S.smsErr)}">💬 문자 없음</span>` : ''}${callsBusy ? '<span class="small muted">📞 통화 글로 바꾸는 중…</span>' : ''}<span class="small muted">${h(status)}</span>
+      <div class="spacer"></div>${S.smsErr && MV.src !== 'mail' ? `<span class="small muted" title="${h(S.smsErr)}">💬 문자 없음</span>` : ''}${callsBusy ? `<span class="small muted">📞 통화 글로 바꾸는 중… ${callLeft() > 1 ? `(남은 ${callLeft()}개)` : ''}</span>` : ''}<span class="small muted">${h(status)}</span>
       <button type="button" class="btn" data-mvrefresh ${S.mailLoading ? 'disabled' : ''}>↻ 새로고침</button>
     </div>`;
   if (!S.mailList && !S.smsList) {
@@ -4239,8 +4258,9 @@ function renderMailView() {
       lastDay = d;
       const due = x.sum.dues.find((y) => y.date);
       const ats = x.sum.atts.length;
-      return `${head}<div class="mv-item ${MV.sel === x.mail.id ? 'cur' : ''} ${x.done ? 'done' : ''}" data-mvid="${h(x.mail.id)}">
-        <span class="mv-cat c-${x.sum.cat}">${h(x.sum.cat === 'due' ? '기한' : CAT_LABEL[x.sum.cat])}</span>
+      const pick = MV.pick && x.mail.source === 'call';
+      return `${head}<div class="mv-item ${MV.sel === x.mail.id && !MV.pick ? 'cur' : ''} ${x.done ? 'done' : ''} ${pick && MV.pick.has(x.mail.id) ? 'picked' : ''}" data-mvid="${h(x.mail.id)}">
+        ${pick ? `<input type="checkbox" class="mv-pick" tabindex="-1" ${MV.pick.has(x.mail.id) ? 'checked' : ''}>` : ''}<span class="mv-cat c-${x.sum.cat}">${h(x.sum.cat === 'due' ? '기한' : CAT_LABEL[x.sum.cat])}</span>
         <div class="mv-it"><div class="mv-r1"><b>${x.mail.source === 'sms' ? '💬 ' : x.mail.source === 'call' ? '📞 ' : ''}${h(x.mail.from || '')}</b><span>${x.more ? `<i class="mv-more">+${x.more}</i> ` : ''}${h((x.mail.received || '').slice(11, 16))}${x.done ? ' ✓완료' : ''}</span></div>
           <div class="mv-sub ${x.mail.unread ? '' : 'read'}">${h(x.sum.title)}</div>
           ${x.sum.gist && !x.sum.gist.startsWith(x.sum.title.replace(/…$/, '')) ? `<div class="mv-g">${h(x.sum.gist)}</div>` : ''}
@@ -4261,7 +4281,7 @@ function renderMailView() {
           x.mail.source === 'sms'
             ? '<span class="mv-tag" style="align-self:center">💬 휴대폰 문자</span>'
             : x.mail.source === 'call'
-              ? `${x.mail.pending && !x.mail.busy ? '<button type="button" class="btn" data-mvconv>글로 바꾸기</button>' : ''}<button type="button" class="btn" data-mvplay>▶ 녹음 듣기</button>`
+              ? `${x.mail.busy ? '' : x.mail.pending ? '<button type="button" class="btn" data-mvconv>글로 바꾸기</button>' : '<button type="button" class="btn" data-mvconv title="목소리 구분까지 다시">다시 바꾸기</button>'}<button type="button" class="btn" data-mvplay>▶ 녹음 듣기</button>`
               : '<button type="button" class="btn" data-mvopen>Outlook에서 열기</button>'
         }
         <button type="button" class="btn ${x.done ? '' : 'primary'}" data-mvdone>${x.done ? '완료 취소' : '✓ 완료'}</button></div>
@@ -4281,8 +4301,9 @@ function renderMailView() {
         }
         ${x.sum.atts.length ? `<div><h4>첨부</h4><div class="mv-att">${x.sum.atts.map((n) => `<span>📎 ${h(n)}${readAtts.has(n) ? ' · 읽음' : ''}</span>`).join('')}</div></div>` : ''}
       </div>
+      ${x.mail.source === 'call' && x.mail.lines?.length ? callBubbles(x.mail) : ''}
       ${x.mail.source === 'sms' ? `<div class="mv-thread" id="mv-thread" data-tid="${h(x.mail.id)}"><div class="mv-th-h">대화 기록 · ${h(x.mail.from || '')}</div><div class="muted small" style="padding:10px">불러오는 중…</div></div>` : ''}
-      <details class="mv-orig" ${x.mail.source === 'sms' ? '' : 'open'}><summary>${x.mail.source === 'call' ? '통화 내용 (자동 변환, 틀린 부분이 있을 수 있음)' : '원문'}</summary><div>${highlightHtml((mb?.body || stripQuoted(x.mail.body || '')).slice(0, 6000), hits, h)}</div>${[].concat(x.mail.attText || [])
+      <details class="mv-orig" ${x.mail.source === 'sms' || x.mail.lines?.length ? '' : 'open'}><summary>${x.mail.source === 'call' ? (x.mail.lines?.length ? '글 전체 (찾은 날짜 표시)' : '통화 내용 (자동 변환, 틀린 부분이 있을 수 있음)') : '원문'}</summary><div>${highlightHtml((mb?.body || stripQuoted(x.mail.body || '')).slice(0, 6000), hits, h)}</div>${[].concat(x.mail.attText || [])
         .map((a) => `<div class="mv-attt">📎 ${h(a.name)}</div><div>${highlightHtml(a.text.slice(0, 3000), hits, h)}</div>`)
         .join('')}</details>
       </div>
@@ -4297,8 +4318,17 @@ function renderMailView() {
       ]
         .map(([k, l]) => `<button type="button" class="${MV.src === k ? 'on' : ''}" data-mvsrc="${k}">${l}<em>${srcCnt[k]}</em></button>`)
         .join('')}</div>
+      ${
+        MV.src === 'call'
+          ? `<div class="mv-pickbar">${
+              MV.pick
+                ? `<button type="button" class="btn" data-mvpickall>${list.every((y) => MV.pick.has(y.mail.id)) && list.length ? '선택 해제' : '전체 선택'}</button><span class="small muted">${MV.pick.size}개 선택</span><span class="spacer"></span><button type="button" class="btn" data-mvpickx>취소</button><button type="button" class="btn primary" data-mvpickgo ${MV.pick.size ? '' : 'disabled'}>글로 바꾸기</button>`
+                : `<span class="small muted">${callLeft() ? `글로 바꾸는 중 · 남은 ${callLeft()}개` : ''}</span><span class="spacer"></span><button type="button" class="btn" data-mvpick>☑ 여러 개 선택</button>`
+            }</div>`
+          : ''
+      }
       <div class="mv-lf">
-        <select class="inp mv-sel" id="mv-days">${[1, 3, 7, 14].map((d) => `<option value="${d}" ${v.days === d ? 'selected' : ''}>${d === 1 ? '오늘' : `최근 ${d}일`}</option>`).join('')}</select>
+        <select class="inp mv-sel" id="mv-days">${[1, 3, 7, 14, 30].map((d) => `<option value="${d}" ${v.days === d ? 'selected' : ''}>${d === 1 ? '오늘' : `최근 ${d}일`}</option>`).join('')}</select>
         <select class="inp mv-sel mv-co" id="mv-co"><option value="">🏢 회사: 전체 (${shown0.length})</option>${cos
           .map(([n, c]) => `<option value="${h(n)}" ${MV.co === n ? 'selected' : ''}>🏢 ${h(n)} (${c})</option>`)
           .join('')}${coCount.get('') ? `<option value="__none" ${MV.co === '__none' ? 'selected' : ''}>회사 미확인 (${coCount.get('')})</option>` : ''}</select>
@@ -4315,6 +4345,29 @@ function renderMailView() {
     qi.focus();
     qi.setSelectionRange(qi.value.length, qi.value.length);
   }
+}
+/** 통화 말풍선: 나(오른쪽 파랑) / 상대(왼쪽 회색) */
+function callBubbles(m) {
+  const spks = [...new Set(m.lines.map((l) => l.spk).filter((v) => v != null))];
+  const known = m.me != null;
+  const mmss = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+  let prev = '';
+  const body = m.lines
+    .map((l) => {
+      const me = known && l.spk === m.me;
+      const who = !spks.length ? '' : known ? (me ? '나' : m.from) : `화자 ${String.fromCharCode(65 + Math.max(0, spks.indexOf(l.spk)))}`;
+      const head = l.spk !== prev ? `<div class="mv-th-t">${h(who)} · ${mmss(l.t || 0)}</div>` : '';
+      prev = l.spk;
+      return `<div class="mv-th-m ${me ? 'me' : ''} ${!known && spks.indexOf(l.spk) === 1 ? 'alt' : ''}" ${!known && spks.length > 1 ? `data-mvme="${l.spk}" title="눌러서 '나'로 지정"` : ''}>${head}<div class="b">${h(l.text)}</div></div>`;
+    })
+    .join('');
+  const tools =
+    spks.length < 2
+      ? '<span class="muted" style="font-weight:400">· 목소리 구분 없음</span>'
+      : known
+        ? `<button type="button" class="linkbtn" data-mvswap>나/상대 바꾸기</button>${m.meBy === 'user' ? '' : '<span class="muted" style="font-weight:400"> · 자동</span>'}`
+        : '<span class="mv-hint">내가 말한 말풍선을 한 번 눌러 주세요</span>';
+  return `<div class="mv-thread mv-call"><div class="mv-th-h">통화 내용 · ${h(m.from)} ${tools}</div><div class="mv-th-l">${body}</div></div>`;
 }
 function mvCurrent() {
   return mvItems().find((x) => x.mail.id === MV.sel);
@@ -4384,12 +4437,54 @@ function bindMailView() {
     const v = mvState();
     const it = e.target.closest('[data-mvid]');
     if (it) {
+      if (MV.pick && it.dataset.mvid.startsWith('call:')) {
+        const id = it.dataset.mvid;
+        const ids = [...root.querySelectorAll('[data-mvid^="call:"]')].map((n) => n.dataset.mvid);
+        if (e.shiftKey && MV.pickLast && ids.includes(MV.pickLast)) {
+          const [a, b] = [ids.indexOf(MV.pickLast), ids.indexOf(id)].sort((p, q) => p - q);
+          for (const k of ids.slice(a, b + 1)) MV.pick.add(k);
+        } else if (MV.pick.has(id)) MV.pick.delete(id);
+        else MV.pick.add(id);
+        MV.pickLast = id;
+        return renderMailView();
+      }
       MV.sel = it.dataset.mvid;
       return renderMailView();
+    }
+    if (e.target.closest('[data-mvpick]')) {
+      MV.pick = new Set();
+      return renderMailView();
+    }
+    if (e.target.closest('[data-mvpickx]')) {
+      MV.pick = null;
+      return renderMailView();
+    }
+    if (e.target.closest('[data-mvpickall]')) {
+      const ids = [...root.querySelectorAll('[data-mvid^="call:"]')].map((n) => n.dataset.mvid);
+      if (ids.every((k) => MV.pick.has(k))) MV.pick.clear();
+      else ids.forEach((k) => MV.pick.add(k));
+      return renderMailView();
+    }
+    if (e.target.closest('[data-mvpickgo]')) {
+      const st = await window.api.calls.status({ model: callState().model });
+      if (!st.ok || !st.data.ready) return toast('먼저 설정 → 통화 녹음에서 음성 인식을 설치하세요.');
+      let n = 0;
+      for (const m of S.callList || []) {
+        if (!MV.pick.has(m.id) || m.busy) continue;
+        if (m.pending) m.force = true;
+        else m.redo = true;
+        delete callState().failed[m.name];
+        n++;
+      }
+      MV.pick = null;
+      toast(`통화 ${n}개를 차례로 글로 바꿉니다.`);
+      renderMailView();
+      return queueCalls();
     }
     const st = e.target.closest('[data-mvsrc]');
     if (st) {
       MV.src = st.dataset.mvsrc;
+      MV.pick = null;
       return renderMailView();
     }
     const c = e.target.closest('[data-mvcat]');
@@ -4421,11 +4516,23 @@ function bindMailView() {
     }
     if (e.target.closest('[data-mvco]')) return mvSetCompany(x);
     if (e.target.closest('[data-mvplay]')) return window.api.calls.openFile(x.mail.file);
+    const mb = e.target.closest('[data-mvme]');
+    if (mb || e.target.closest('[data-mvswap]')) {
+      const spks = [...new Set((x.mail.lines || []).map((l) => l.spk).filter((v) => v != null))];
+      const spk = mb ? +mb.dataset.mvme : spks.find((k) => k !== x.mail.me);
+      if (spk == null) return;
+      await window.api.calls.setMe({ name: x.mail.name, spk });
+      x.mail.me = spk;
+      x.mail.meBy = 'user';
+      renderMailView();
+      return loadCalls(); // 다른 통화도 내 목소리 기준으로 다시 맞춤
+    }
     if (e.target.closest('[data-mvconv]')) {
       const m = S.callList?.find((y) => y.id === x.mail.id);
       if (!m) return;
       const st = await window.api.calls.status({ model: callState().model });
       if (!st.ok || !st.data.ready) return toast('먼저 설정 → 통화 녹음에서 음성 인식을 설치하세요.');
+      if (!m.pending) m.redo = true;
       m.force = true;
       delete callState().failed[m.name];
       return queueCalls();

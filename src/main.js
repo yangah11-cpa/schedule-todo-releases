@@ -288,6 +288,7 @@ app.whenReady().then(() => {
   );
   ipcMain.handle('calls:audio', wrap((file) => calls.readAudio(file)));
   ipcMain.handle('calls:transcribe', wrap((opt) => calls.transcribe(opt || {})));
+  ipcMain.handle('calls:setMe', wrap((opt) => calls.setMe(opt || {})));
   ipcMain.handle('calls:openFile', wrap((file) => shell.openPath(file)));
   ipcMain.handle(
     'calls:pickDir',

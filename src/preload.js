@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('api', {
     install: call('calls:install'),
     audio: call('calls:audio'),
     transcribe: call('calls:transcribe'),
+    setMe: call('calls:setMe'),
     openFile: call('calls:openFile'),
     pickDir: call('calls:pickDir'),
     onProgress: (cb) => ipcRenderer.on('calls:progress', (_e, p) => cb(p)),

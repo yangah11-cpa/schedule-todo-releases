@@ -443,3 +443,15 @@ input[type="time"]::-webkit-calendar-picker-indicator { display: none; }
 .mv-th-m .b { background: #F1F1F2; border-radius: 10px; padding: 8px 12px; font-size: 13px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
 .mv-th-m.me .b { background: #DCE7FB; }
 .mv-th-m.cur .b { box-shadow: 0 0 0 2px #7FA2E8; }
+
+/* 통화: 말풍선, 여러 개 선택 */
+.mv-call .mv-th-l { max-height: none; }
+.mv-th-m.alt .b { background: #E9F3EC; }
+.mv-th-m[data-mvme] { cursor: pointer; }
+.mv-th-m[data-mvme]:hover .b { box-shadow: 0 0 0 2px #7FA2E8; }
+.mv-hint { font-weight: 500; color: var(--accent); margin-left: 6px; }
+.mv-th-h .linkbtn { margin-left: 6px; font-weight: 500; }
+.mv-pickbar { display: flex; align-items: center; gap: 6px; padding: 8px 10px 0; }
+.mv-pickbar .btn { height: 30px; font-size: 12.5px; }
+.mv-pick { margin: 3px 2px 0 0; flex: 0 0 auto; pointer-events: none; }
+.mv-item.picked { background: #EEF3FC; }
