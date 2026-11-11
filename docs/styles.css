@@ -379,3 +379,7 @@ mark.hl-place { background: #CDEFD6; }
 #viewTeam { min-height: calc(100dvh - 56px - var(--tabbar-h)); padding-bottom: 16px; }
 #viewTeam > .team { margin: 8px 8px 0; }
 .tabbar button span { white-space: nowrap; font-size: 11.5px; }
+
+.tw tr.me th { color: var(--accent); }
+.tw tr.me th small { display: block; font-size: 10px; font-weight: 700; color: #fff; background: var(--accent); border-radius: 4px; width: fit-content; padding: 0 4px; margin-top: 2px; }
+.tw tr.me td { background: #F3F7FE; }

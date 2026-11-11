@@ -511,3 +511,7 @@ input[type="time"]::-webkit-calendar-picker-indicator { display: none; }
 .ai-meter.mid { color: #B7791F; } .ai-meter.mid .bar i { background: #D69E2E; } .ai-meter.mid .bar { background: #FBEBC5; }
 .ai-meter.low { color: #B3261E; } .ai-meter.low .bar i { background: #D9534F; } .ai-meter.low .bar { background: #FBD9D7; }
 .ai-meter.off { color: var(--faint); } .ai-meter.off .bar i { background: #B9B6AF; } .ai-meter.off .bar { background: var(--soft); }
+
+tr.tv-me th { color: var(--accent); }
+tr.tv-me td { background: #F3F7FE; }
+.tv-metag { font-size: 10px; font-weight: 700; color: #fff; background: var(--accent); border-radius: 4px; padding: 0 4px; vertical-align: 1px; }

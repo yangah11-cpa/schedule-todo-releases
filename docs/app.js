@@ -602,7 +602,7 @@ function renderTeam() {
     </div>${renderTeamWeek(days)}`;
 }
 
-/* 하단 팀 일정 (월~금, 같은 일정은 한 막대, 인차지 짙은 색, 본인 제외) */
+/* 팀 일정 (월~금, 같은 일정은 한 막대, 인차지 짙은 색, 나는 맨 위) */
 function renderTeamWeek(days) {
   const t = S.team;
   let html = '<div class="team"><div class="team-h"><b>팀 일정</b>';
@@ -615,7 +615,7 @@ function renderTeamWeek(days) {
   const ws = wd[0];
   const we = wd[4];
   if (we < t.from || ws > t.to) return `${html}<div class="empty small">이 주는 팀 일정표 기간 밖입니다.</div></div>`;
-  const names = t.names.filter((n) => n !== t.me);
+  const names = [...t.names.filter((n) => n === t.me), ...t.names.filter((n) => n !== t.me)]; // 나를 맨 위에
   html += `<table class="tw"><colgroup><col style="width:52px">${wd.map(() => '<col>').join('')}</colgroup>
     <thead><tr><th></th>${wd.map((d) => `<th class="${d === D.today() ? 'tod' : ''}">${D.DOW_KO[D.dow(d)]} ${D.parts(d).d}</th>`).join('')}</tr></thead><tbody>`;
   for (const n of names) {
@@ -644,7 +644,7 @@ function renderTeamWeek(days) {
       row += '<td></td>';
       i++;
     }
-    html += `<tr><th>${h(n)}</th>${row}</tr>`;
+    html += `<tr class="${n === t.me ? 'me' : ''}"><th>${h(n)}${n === t.me ? '<small>나</small>' : ''}</th>${row}</tr>`;
   }
   html += `</tbody></table><div class="note" style="padding:6px 2px 0"><span class="tc lead" style="display:inline-block">짙은 색</span> 인차지</div></div>`;
   return html;

@@ -2999,8 +2999,9 @@ function openTeamView(date) {
   const draw = () => {
     const ws = D.addDays(cur, -((D.dow(cur) + 6) % 7)); // 월요일 시작
     const days = Array.from({ length: 7 }, (_, i) => D.addDays(ws, i));
-    // 나(본인)는 제외, 같은 일정은 기간만큼 한 막대로 이어서 표시
-    const names = [...new Set(team.flatMap((p) => p.people.map((x) => x.name)))].filter((n) => n !== me);
+    // 나(본인)는 맨 위, 같은 일정은 기간만큼 한 막대로 이어서 표시
+    const all = [...new Set(team.flatMap((p) => p.people.map((x) => x.name)))];
+    const names = [...all.filter((n) => n === me), ...all.filter((n) => n !== me)];
     const we = days[6];
     const cls = (d) => `${d === date ? 'sel' : ''} ${D.dow(d) === 0 || D.dow(d) === 6 ? 'we' : ''}`;
     const rowHtml = (name) => {
@@ -3030,7 +3031,7 @@ function openTeamView(date) {
         i = g.i + g.n;
       }
       while (i < 7) html += `<td class="${cls(days[i++])}"></td>`;
-      return `<tr><th>${h(name)}</th>${html}</tr>`;
+      return `<tr class="${name === me ? 'tv-me' : ''}"><th>${h(name)}${name === me ? ' <small class="tv-metag">나</small>' : ''}</th>${html}</tr>`;
     };
     const inRange = team.some((p) => days.some((d) => d >= p.from && d <= p.to));
     $('#tvBody', el).innerHTML = `
