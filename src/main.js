@@ -266,6 +266,7 @@ app.whenReady().then(() => {
   ipcMain.handle('drive:load', wrap((name) => google.loadAppFile(name)));
   ipcMain.handle('outlook:read', wrap((opt) => require('./outlook').readInbox(opt || {})));
   ipcMain.handle('outlook:selected', wrap(() => require('./outlook').readSelected()));
+  ipcMain.handle('outlook:open', wrap((id) => require('./outlook').openItem(id)));
   // Outlook에서 메일을 고른 채 Ctrl+Shift+E → 이 프로그램이 앞으로 나와 그 메일로 일정/할 일 만들기
   try {
     const ok = globalShortcut.register('CommandOrControl+Shift+E', () => {

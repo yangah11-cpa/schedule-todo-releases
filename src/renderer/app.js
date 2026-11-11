@@ -4,6 +4,7 @@ import { expandEvent, nextOccurrence, firstOnOrAfter, describeRule, parseQuickAd
 import { getHolidays } from './lib/holidays.js';
 import { solarPayload, lunarTargets, lunarPayload, fromGoogle, timeRange, composeDescription } from './lib/gsync.js';
 import { parseTeamWorkbook, myEngagements, teamOn, sameClient } from './lib/team.js';
+import { summarize, companyOf, domainOf, CAT_LABEL } from './lib/mailsum.js';
 import { mailCandidates, stripQuoted, highlightHtml, parseShared, cleanSubject, setKeywords, extractWords, scoreWords, mergeKeywords, keywordsOf, BASE_KEYS } from './lib/mailparse.js';
 
 /* ───────────── 공통 ───────────── */
@@ -3269,6 +3270,7 @@ async function init() {
   setKeywords(keywordsOf(kwStore()));
   setTimeout(() => syncKw(), 8000); // 휴대폰과 단어 목록 맞추기
   window.api.outlook.onPick?.(() => pickOutlookMail());
+  bindMailView();
   setTimeout(() => mailState().enabled && scanMail(), 20000); // 시작 20초 뒤 첫 확인
   setInterval(() => mailState().enabled && scanMail(), 30 * 60 * 1000); // 30분마다
 
@@ -3324,20 +3326,25 @@ const MAIL_ERR = {
 };
 let mailBusy = false;
 const mailBodies = new Map();
-async function scanMail(manual = false) {
+async function scanMail(manual = false, quiet = false) {
   if (mailBusy) return;
   mailBusy = true;
   const m = mailState();
+  S.mailLoading = true;
+  if (mvVisible()) renderMailView();
   try {
-    const r = await window.api.outlook.read({ days: m.days, start: manual });
+    const r = await window.api.outlook.read({ days: Math.max(m.days, mvState().days), start: manual });
     const res = r.ok ? r.data : { ok: false, error: r.error };
     if (!res.ok) {
       m.lastError = MAIL_ERR[res.code] || `메일을 읽지 못했습니다: ${res.error || '알 수 없는 오류'}`;
       if (res.code === 'notRunning' && !manual) m.lastError = MAIL_ERR.notRunning;
       save();
-      if (manual) toast(m.lastError);
+      if (manual && !quiet) toast(m.lastError);
       return;
     }
+    S.mailList = res.mails || [];
+    S.mailListAt = Date.now();
+    sumCache.clear();
     const today = D.today();
     const nd = new Date();
     const now = `${today}T${String(nd.getHours()).padStart(2, '0')}:${String(nd.getMinutes()).padStart(2, '0')}`;
@@ -3372,10 +3379,13 @@ async function scanMail(manual = false) {
         /* 알림 실패는 무시 */
       }
     }
-    if (manual) toast(cands.length ? `일정 후보 ${cands.length}건을 찾았습니다.` : '새 일정 후보가 없습니다.');
+    if (manual && !quiet) toast(cands.length ? `일정 후보 ${cands.length}건을 찾았습니다.` : '새 일정 후보가 없습니다.');
     refreshMailDialog?.();
   } finally {
     mailBusy = false;
+    S.mailLoading = false;
+    renderMailSumBadge();
+    if (mvVisible()) renderMailView();
   }
 }
 function mailWhen(c) {
@@ -3790,3 +3800,314 @@ document.addEventListener('keydown', (e) => {
 }, true);
 window.addEventListener('resize', closeTimePop);
 document.addEventListener('scroll', closeTimePop, true);
+
+/* ───────────── 메일 요약 탭 (PC 안에서 핵심 문장 뽑기) ───────────── */
+const sumCache = new Map();
+function mvState() {
+  S.data.mailSum ||= { days: 3, done: {}, domains: {}, over: {} };
+  const v = S.data.mailSum;
+  v.done ||= {};
+  v.domains ||= {};
+  v.over ||= {};
+  return v;
+}
+const MV = { tab: 'main', cat: 'all', co: '', q: '', showDone: false, sel: null };
+const mvVisible = () => MV.tab === 'mail';
+function mvClients() {
+  return [...companyNames(), ...Object.values(mvState().domains)];
+}
+function mvItems() {
+  const v = mvState();
+  const today = D.today();
+  const nd = new Date();
+  const now = `${today}T${String(nd.getHours()).padStart(2, '0')}:${String(nd.getMinutes()).padStart(2, '0')}`;
+  const since = D.addDays(today, -(v.days - 1));
+  const clients = mvClients();
+  return (S.mailList || [])
+    .filter((m) => (m.received || '').slice(0, 10) >= since)
+    .map((m) => {
+      let x = sumCache.get(m.id);
+      if (!x) {
+        const mail = { ...m, body: [m.body || '', ...[].concat(m.attText || []).map((a) => a.text)].join('\n\n') };
+        // 요지·요청은 본문, 기한·일정은 본문 + 첨부(attText)에서
+        x = { mail: m, sum: summarize(m, today, now), mailForCo: mail };
+        sumCache.set(m.id, x);
+      }
+      const ov = v.over[m.id];
+      x.co = ov ? { name: ov, by: 'user' } : x.sum.cat === 'auto' ? { name: '', by: 'auto' } : companyOf(x.mailForCo, clients, v.domains);
+      x.done = !!v.done[m.id];
+      return x;
+    })
+    .sort((a, b) => (b.mail.received || '').localeCompare(a.mail.received || ''));
+}
+function renderMailSumBadge() {
+  const b = $('#mailSumBadge');
+  if (!b) return;
+  const n = S.mailList ? mvItems().filter((x) => !x.done && (x.sum.cat === 'request' || x.sum.cat === 'due')).length : 0;
+  b.hidden = !n;
+  b.textContent = n;
+}
+function setAppTab(t) {
+  MV.tab = t;
+  document.querySelectorAll('[data-apptab]').forEach((b) => b.classList.toggle('on', b.dataset.apptab === t));
+  $('main.main').hidden = t !== 'main';
+  $('#mailView').hidden = t !== 'mail';
+  if (t === 'mail') {
+    renderMailView();
+    // 처음 열거나 10분 넘게 지났으면 새로 읽기
+    if (!S.mailList || Date.now() - (S.mailListAt || 0) > 10 * 60000) scanMail(true, true);
+  } else renderAll();
+}
+const fmtDay = (d) => {
+  const t = D.today();
+  const lab = `${+d.slice(5, 7)}월 ${+d.slice(8, 10)}일 (${'일월화수목금토'[D.dow(d)]})`;
+  return d === t ? `오늘 · ${lab}` : d === D.addDays(t, -1) ? `어제 · ${lab}` : lab;
+};
+const dueTxt = (d) => {
+  if (!d.date) return '';
+  const f = (x) => `${+x.slice(5, 7)}/${+x.slice(8, 10)}(${'일월화수목금토'[D.dow(x)]})`;
+  return `${f(d.date)}${d.endDate && d.endDate !== d.date ? `~${f(d.endDate)}` : ''}${d.startTime ? ` ${d.startTime}` : ''}${!d.startTime && /까지/.test(d.text || '') ? '까지' : ''}`;
+};
+function renderMailView() {
+  const root = $('#mailView');
+  if (!root || root.hidden) return;
+  const v = mvState();
+  const all = mvItems();
+  const shown0 = all.filter((x) => MV.showDone || !x.done);
+  // 회사 목록 (현재 기간)
+  const coCount = new Map();
+  for (const x of shown0) coCount.set(x.co.name || '', (coCount.get(x.co.name || '') || 0) + 1);
+  const cos = [...coCount.entries()].filter(([n]) => n).sort((a, b) => b[1] - a[1]);
+  if (MV.co && MV.co !== '__none' && !coCount.has(MV.co)) MV.co = '';
+  const byCo = shown0.filter((x) => !MV.co || (MV.co === '__none' ? !x.co.name : x.co.name === MV.co));
+  const q = MV.q.trim().toLowerCase();
+  const byQ = q ? byCo.filter((x) => `${x.mail.from} ${x.mail.subject} ${x.sum.gist} ${x.co.name}`.toLowerCase().includes(q)) : byCo;
+  const cnt = { all: byQ.length, request: 0, due: 0, info: 0, auto: 0 };
+  for (const x of byQ) cnt[x.sum.cat]++;
+  const list = byQ.filter((x) => MV.cat === 'all' || x.sum.cat === MV.cat);
+  if (!list.some((x) => x.mail.id === MV.sel)) MV.sel = list[0]?.mail.id || null;
+  const m = mailState();
+  const status = S.mailLoading
+    ? '받은 편지함 읽는 중…'
+    : m.lastError && !S.mailList
+      ? m.lastError
+      : S.mailListAt
+        ? `${new Date(S.mailListAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })} 확인`
+        : '';
+  let html = `<div class="mv-bar">
+      <select class="inp mv-sel" id="mv-days">${[1, 3, 7, 14].map((d) => `<option value="${d}" ${v.days === d ? 'selected' : ''}>${d === 1 ? '오늘' : `최근 ${d}일`}</option>`).join('')}</select>
+      <select class="inp mv-sel mv-co" id="mv-co"><option value="">🏢 회사: 전체 (${shown0.length})</option>${cos
+        .map(([n, c]) => `<option value="${h(n)}" ${MV.co === n ? 'selected' : ''}>🏢 ${h(n)} (${c})</option>`)
+        .join('')}${coCount.get('') ? `<option value="__none" ${MV.co === '__none' ? 'selected' : ''}>회사 미확인 (${coCount.get('')})</option>` : ''}</select>
+      ${['all', 'request', 'due', 'info', 'auto']
+        .map((c) => `<button type="button" class="mv-chip ${MV.cat === c ? 'on' : ''}" data-mvcat="${c}">${c === 'all' ? '전체' : CAT_LABEL[c]}<em>${cnt[c]}</em></button>`)
+        .join('')}
+      <input class="inp mv-q" id="mv-q" placeholder="🔍 보낸 사람·제목 검색" value="${h(MV.q)}">
+      <label class="checkline small"><input type="checkbox" id="mv-done" ${MV.showDone ? 'checked' : ''}>완료한 메일도 보기</label>
+      <div class="spacer"></div><span class="small muted">${h(status)}</span>
+      <button type="button" class="btn" data-mvrefresh ${S.mailLoading ? 'disabled' : ''}>↻ 새로고침</button>
+    </div>`;
+  if (!S.mailList) {
+    html += `<div class="mv-empty">${S.mailLoading ? 'Outlook 받은 편지함을 읽는 중입니다…' : h(m.lastError || 'Outlook 받은 편지함을 읽어 옵니다.')}<br><br>${S.mailLoading ? '' : '<button type="button" class="btn primary" data-mvrefresh>불러오기</button>'}</div>`;
+    root.innerHTML = html;
+    return;
+  }
+  // 목록
+  let lastDay = '';
+  const items = list
+    .map((x) => {
+      const d = (x.mail.received || '').slice(0, 10);
+      const head = d !== lastDay ? `<div class="mv-day">${h(fmtDay(d))}</div>` : '';
+      lastDay = d;
+      const due = x.sum.dues.find((y) => y.date);
+      const ats = x.sum.atts.length;
+      return `${head}<div class="mv-item ${MV.sel === x.mail.id ? 'cur' : ''} ${x.done ? 'done' : ''}" data-mvid="${h(x.mail.id)}">
+        <span class="mv-cat c-${x.sum.cat}">${h(x.sum.cat === 'due' ? '기한' : CAT_LABEL[x.sum.cat])}</span>
+        <div class="mv-it"><div class="mv-r1"><b>${h(x.mail.from || '')}</b><span>${h((x.mail.received || '').slice(11, 16))}${x.done ? ' ✓완료' : ''}</span></div>
+          <div class="mv-sub ${x.mail.unread ? '' : 'read'}">${h(x.sum.title)}</div>
+          ${x.sum.gist ? `<div class="mv-g">${h(x.sum.gist)}</div>` : ''}
+          <div class="mv-tags">${x.co.name ? `<span class="mv-co-t">${h(x.co.name)}</span>` : ''}${due ? `<span class="mv-tag d">📅 ${h(dueTxt(due))}</span>` : ''}${ats ? `<span class="mv-tag">📎 ${ats === 1 ? h(x.sum.atts[0]) : ats}</span>` : ''}${x.sum.requests.length ? `<span class="mv-tag">요청 ${x.sum.requests.length}</span>` : ''}</div>
+        </div></div>`;
+    })
+    .join('');
+  // 상세
+  const x = list.find((y) => y.mail.id === MV.sel);
+  let det = '<div class="mv-empty">메일이 없습니다.</div>';
+  if (x) {
+    const mb = mailBodies.get(x.mail.id);
+    const hits = x.sum.dues.flatMap((d) => d.hits || []);
+    const readAtts = new Set([].concat(x.mail.attText || []).map((a) => a.name));
+    det = `<div class="mv-dh"><div style="flex:1;min-width:0"><h2>${h(x.sum.title)}</h2>
+        <div class="mv-m">${x.co.name ? `<span class="mv-co-t">${h(x.co.name)}</span> ` : ''}${h(x.mail.from || '')}${x.mail.fromAddr && !/^\/o=/i.test(x.mail.fromAddr) ? ` &lt;${h(x.mail.fromAddr)}&gt;` : ''} · ${h(fmtDay((x.mail.received || '').slice(0, 10)).replace(/^(오늘|어제) · /, ''))} ${h((x.mail.received || '').slice(11, 16))} · <button type="button" class="linkbtn" data-mvco>${x.co.name ? '회사 바꾸기' : '회사 지정'}</button></div></div>
+        <button type="button" class="btn" data-mvopen>Outlook에서 열기</button>
+        <button type="button" class="btn ${x.done ? '' : 'primary'}" data-mvdone>${x.done ? '완료 취소' : '✓ 완료'}</button></div>
+      <div class="mv-scroll">
+      <div class="mv-sum">
+        <div><h4>요지</h4><div class="mv-gist">${h(x.sum.gist || '(본문 없음)')}</div></div>
+        ${x.sum.requests.length ? `<div><h4>요청 사항</h4><ul>${x.sum.requests.map((r) => `<li>${h(r)}</li>`).join('')}</ul></div>` : ''}
+        ${
+          x.sum.dues.length
+            ? `<div><h4>기한 · 일정</h4>${x.sum.dues
+                .map(
+                  (d, i) => `<div class="mv-due">${d.date ? `<span class="dt">${h(dueTxt(d))}</span>` : ''}<span class="tx">${h(d.text || '')}${d.att ? ` · 📎 ${h(d.att)}` : ''}</span>
+                    <button type="button" class="btn" data-mvdue="todo" data-i="${i}">할 일로</button><button type="button" class="btn primary" data-mvdue="event" data-i="${i}">일정으로</button></div>`
+                )
+                .join('')}</div>`
+            : ''
+        }
+        ${x.sum.atts.length ? `<div><h4>첨부</h4><div class="mv-att">${x.sum.atts.map((n) => `<span>📎 ${h(n)}${readAtts.has(n) ? ' · 읽음' : ''}</span>`).join('')}</div></div>` : ''}
+      </div>
+      <details class="mv-orig" open><summary>원문</summary><div>${highlightHtml((mb?.body || stripQuoted(x.mail.body || '')).slice(0, 6000), hits, h)}</div>${[].concat(x.mail.attText || [])
+        .map((a) => `<div class="mv-attt">📎 ${h(a.name)}</div><div>${highlightHtml(a.text.slice(0, 3000), hits, h)}</div>`)
+        .join('')}</details>
+      </div>
+      <div class="mv-foot"><button type="button" class="btn" data-mvmk="todo">할 일로</button><button type="button" class="btn primary" data-mvmk="event">일정으로</button></div>`;
+  }
+  html += `<div class="mv-body"><div class="mv-list">${items || '<div class="mv-empty small">해당하는 메일이 없습니다.</div>'}</div><div class="mv-detail">${det}</div></div>`;
+  const keepScroll = root.querySelector('.mv-list')?.scrollTop || 0;
+  const focusQ = document.activeElement?.id === 'mv-q';
+  root.innerHTML = html;
+  root.querySelector('.mv-list').scrollTop = keepScroll;
+  if (focusQ) {
+    const qi = $('#mv-q', root);
+    qi.focus();
+    qi.setSelectionRange(qi.value.length, qi.value.length);
+  }
+}
+function mvCurrent() {
+  return mvItems().find((x) => x.mail.id === MV.sel);
+}
+function mvMake(kind, x, due) {
+  const d = due || x.sum.dues.find((y) => y.date) || null;
+  const memo = `메일: ${x.mail.subject || ''}\n보낸 사람: ${x.mail.from || ''} (${(x.mail.received || '').slice(0, 16).replace('T', ' ')})${x.sum.gist ? `\n${x.sum.gist}` : ''}`;
+  const title = x.co.name && !x.sum.title.includes(x.co.name) ? `${x.co.name} ${x.sum.title}` : x.sum.title;
+  if (kind === 'todo') return openTodoDialog(null, { title, due: d?.date || null, time: d?.startTime || '', memo });
+  const st = d?.startTime || '09:00';
+  const [hh, mm] = st.split(':').map(Number);
+  const v = Math.min(hh * 60 + mm + 60, 23 * 60 + 59);
+  openEventDialog({
+    date: d?.date || D.today(),
+    preset: {
+      title,
+      date: d?.date || D.today(),
+      endDate: d?.endDate || d?.date || D.today(),
+      allDay: d ? !d.startTime : true,
+      startTime: st,
+      endTime: d?.endTime || `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`,
+      place: d?.place || '',
+      memo,
+    },
+  });
+}
+async function mvSetCompany(x) {
+  const v = mvState();
+  const dom = domainOf(x.mail.fromAddr);
+  const { el, close } = openModal(
+    `<div class="mhead"><h1>회사 지정</h1><button type="button" class="btn ghost icon" data-x aria-label="닫기">✕</button></div>
+     <div class="mbody">
+       <div class="fld"><label class="lbl" for="co-n">회사 이름</label><input class="inp" id="co-n" value="${h(x.co.name || '')}" list="co-list"><datalist id="co-list">${[...new Set(mvClients())].map((c) => `<option value="${h(c)}">`).join('')}</datalist></div>
+       ${dom && !x.mail.internal ? `<label class="checkline small" style="margin-top:10px"><input type="checkbox" id="co-dom" checked>${h(dom)}에서 오는 메일은 앞으로 이 회사로 표시</label>` : ''}
+     </div>
+     <div class="mfoot"><div class="spacer"></div><button type="button" class="btn" data-x>취소</button><button type="button" class="btn primary" data-ok>저장</button></div>`,
+    { cls: 'narrow' }
+  );
+  setTimeout(() => $('#co-n', el)?.select(), 0);
+  const ok = () => {
+    const n = $('#co-n', el).value.trim();
+    if (n) v.over[x.mail.id] = n;
+    else delete v.over[x.mail.id];
+    if (n && $('#co-dom', el)?.checked) v.domains[dom] = n;
+    save();
+    close();
+    renderMailView();
+  };
+  el.addEventListener('click', (e) => {
+    if (e.target.closest('[data-x]')) return close();
+    if (e.target.closest('[data-ok]')) ok();
+  });
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.isComposing) {
+      e.preventDefault();
+      ok();
+    }
+  });
+}
+function bindMailView() {
+  document.querySelector('.apptabs')?.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-apptab]');
+    if (b) setAppTab(b.dataset.apptab);
+  });
+  const root = $('#mailView');
+  root.addEventListener('click', async (e) => {
+    const v = mvState();
+    const it = e.target.closest('[data-mvid]');
+    if (it) {
+      MV.sel = it.dataset.mvid;
+      return renderMailView();
+    }
+    const c = e.target.closest('[data-mvcat]');
+    if (c) {
+      MV.cat = c.dataset.mvcat;
+      return renderMailView();
+    }
+    if (e.target.closest('[data-mvrefresh]')) return scanMail(true, true);
+    const x = mvCurrent();
+    if (!x) return;
+    if (e.target.closest('[data-mvdone]')) {
+      if (v.done[x.mail.id]) delete v.done[x.mail.id];
+      else v.done[x.mail.id] = Date.now();
+      // 오래된 완료 기록 정리
+      for (const [k, t] of Object.entries(v.done)) if (t < Date.now() - 60 * 864e5) delete v.done[k];
+      save();
+      renderMailSumBadge();
+      return renderMailView();
+    }
+    if (e.target.closest('[data-mvopen]')) {
+      const r = await window.api.outlook.open(x.mail.id);
+      if (!r.ok || (r.data && r.data.ok === false)) toast(`Outlook에서 열지 못했습니다: ${r.error || r.data?.error || ''}`);
+      return;
+    }
+    if (e.target.closest('[data-mvco]')) return mvSetCompany(x);
+    const du = e.target.closest('[data-mvdue]');
+    if (du) return mvMake(du.dataset.mvdue, x, x.sum.dues[+du.dataset.i]);
+    const mk = e.target.closest('[data-mvmk]');
+    if (mk) return mvMake(mk.dataset.mvmk, x);
+  });
+  root.addEventListener('change', (e) => {
+    const v = mvState();
+    if (e.target.id === 'mv-days') {
+      v.days = +e.target.value;
+      save();
+      if (v.days > mailState().days && Date.now() - (S.mailListAt || 0) > 0) scanMail(true, true);
+      renderMailView();
+    } else if (e.target.id === 'mv-co') {
+      MV.co = e.target.value;
+      renderMailView();
+    } else if (e.target.id === 'mv-done') {
+      MV.showDone = e.target.checked;
+      renderMailView();
+    }
+  });
+  let qt = null;
+  root.addEventListener('input', (e) => {
+    if (e.target.id !== 'mv-q') return;
+    MV.q = e.target.value;
+    clearTimeout(qt);
+    qt = setTimeout(renderMailView, 200);
+  });
+  // ↑↓ 로 메일 이동
+  document.addEventListener('keydown', (e) => {
+    if (!mvVisible() || document.querySelector('.modal-back, .modal') || /input|select|textarea/i.test(document.activeElement?.tagName || '')) return;
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    const ids = [...$('#mailView').querySelectorAll('[data-mvid]')].map((n) => n.dataset.mvid);
+    const i = ids.indexOf(MV.sel);
+    const n = ids[Math.max(0, Math.min(ids.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))];
+    if (n && n !== MV.sel) {
+      e.preventDefault();
+      MV.sel = n;
+      renderMailView();
+      $('#mailView .mv-item.cur')?.scrollIntoView({ block: 'nearest' });
+    }
+  });
+}
+

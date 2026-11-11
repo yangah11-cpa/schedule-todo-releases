@@ -49,7 +49,8 @@ try {
         id = [string]$m.EntryID
         subject = [string]$m.Subject
         from = [string]$m.SenderName
-        fromAddr = $(try { [string]$m.SenderEmailAddress } catch { '' })
+        fromAddr = $(try { if ([string]$m.SenderEmailType -eq 'EX') { [string]$m.Sender.GetExchangeUser().PrimarySmtpAddress } else { [string]$m.SenderEmailAddress } } catch { '' })
+        internal = $(try { [string]$m.SenderEmailType -eq 'EX' } catch { $false })
         atts = @($(try { foreach ($a in $m.Attachments) { [string]$a.FileName } } catch {}) | Where-Object { $_ -and $_ -notmatch '^image\d+\.(png|jpe?g|gif)$' })
         received = $(try { $m.ReceivedTime.ToString('yyyy-MM-ddTHH:mm:ss') } catch { (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss') })
         unread = [bool]$m.UnRead
@@ -173,7 +174,28 @@ function readRaw(opt = {}) {
   });
 }
 
+/** Outlook에서 메일 열기 */
+function openItem(id) {
+  if (process.platform !== 'win32' || process.env.ST_OUTLOOK_MOCK) return Promise.resolve({ ok: true });
+  const esc = (x) => String(x).replace(/'/g, "''");
+  const ps1 = `
+$ErrorActionPreference = 'Stop'
+try { $ol = [Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application') } catch { $ol = New-Object -ComObject Outlook.Application }
+$it = $ol.Session.GetItemFromID('${esc(id)}')
+$it.Display()
+try { $it.GetInspector.Activate() } catch {}
+`;
+  const enc = Buffer.from(ps1, 'utf16le').toString('base64');
+  return new Promise((resolve) => {
+    const ps = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', enc], { windowsHide: true });
+    let err = '';
+    ps.stderr.on('data', (d) => (err += d));
+    ps.on('close', (code) => resolve(code === 0 ? { ok: true } : { ok: false, error: err.trim().split('\n')[0] || 'Outlook에서 열지 못했습니다.' }));
+    ps.on('error', (e) => resolve({ ok: false, error: e.message }));
+  });
+}
+
 /** Outlook에서 지금 선택하거나 열어 둔 메일 1통 */
 const readSelected = () => readInbox({ selected: true, max: 10 });
 
-module.exports = { readInbox, readSelected, script };
+module.exports = { readInbox, readSelected, openItem, script };
