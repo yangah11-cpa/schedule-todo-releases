@@ -133,4 +133,46 @@ function readMessages({ days = 3 } = {}) {
   }
 }
 
-module.exports = { readMessages, fixMojibake };
+/**
+ * 한 대화방(같은 번호)의 문자 기록 — 받은 것과 보낸 것 모두, 최근 순 최대 limit개
+ * @param {string} id 목록의 문자 id ("sms:123" / "mms:10")
+ */
+function readThread({ id, limit = 80 } = {}) {
+  const src = dbDir();
+  if (!src || !fs.existsSync(path.join(src, 'phone.db'))) return { ok: false, code: 'noPhoneLink' };
+  const { DatabaseSync } = require('node:sqlite');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'st-phone-'));
+  try {
+    const db = new DatabaseSync(copyDb(src, 'phone.db', tmp));
+    const [kind, num] = String(id).split(':');
+    const row = db.prepare(`SELECT thread_id t FROM ${kind === 'mms' ? 'mms' : 'message'} WHERE message_id = ?`).get(Number(num));
+    if (!row) return { ok: true, messages: [] };
+    const MS = '(timestamp / 10000 - 11644473600000)';
+    const sms = db.prepare(`SELECT message_id id, type, body, ${MS} ms FROM message WHERE thread_id = ? ORDER BY timestamp DESC LIMIT ?`).all(row.t, limit);
+    const mms = db
+      .prepare(
+        `SELECT m.message_id id, m.type type, m.subject subject, (m.timestamp / 10000 - 11644473600000) ms,
+                (SELECT group_concat(p.text, char(10)) FROM mms_part p WHERE p.message_id = m.message_id AND p.content_type = 'text/plain') body
+           FROM mms m WHERE m.thread_id = ? ORDER BY m.timestamp DESC LIMIT ?`
+      )
+      .all(row.t, limit);
+    db.close();
+    const pad = (n) => String(n).padStart(2, '0');
+    const iso = (ms) => {
+      const d = new Date(Number(ms));
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    };
+    const out = [...sms.map((r) => ({ ...r, kind: 'sms' })), ...mms.map((r) => ({ ...r, kind: 'mms' }))]
+      .map((r) => ({ id: `${r.kind}:${r.id}`, sent: Number(r.type) === 2, at: iso(r.ms), body: fixMojibake(r.body || r.subject || '').trim() }))
+      .filter((r) => r.body)
+      .sort((a, b) => a.at.localeCompare(b.at))
+      .slice(-limit);
+    return { ok: true, messages: out };
+  } catch (e) {
+    return { ok: false, code: 'error', error: e.message };
+  } finally {
+    fs.rm(tmp, { recursive: true, force: true }, () => {});
+  }
+}
+
+module.exports = { readMessages, readThread, fixMojibake };

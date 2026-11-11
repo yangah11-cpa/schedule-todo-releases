@@ -3888,7 +3888,15 @@ function mvItems() {
       x.done = !!v.done[m.id];
       return x;
     })
-    .sort((a, b) => (b.mail.received || '').localeCompare(a.mail.received || ''));
+    .sort((a, b) => (b.mail.received || '').localeCompare(a.mail.received || ''))
+    .filter((x, i, arr) => {
+      // 같은 번호의 문자는 가장 최근 것 하나만 (나머지는 상세 화면의 대화 기록에서)
+      if (x.mail.source !== 'sms') return true;
+      const k = String(x.mail.fromAddr || '').replace(/\D/g, '').slice(-8);
+      const first = arr.findIndex((y) => y.mail.source === 'sms' && String(y.mail.fromAddr || '').replace(/\D/g, '').slice(-8) === k);
+      if (first === i) x.more = arr.filter((y) => y.mail.source === 'sms' && String(y.mail.fromAddr || '').replace(/\D/g, '').slice(-8) === k).length - 1;
+      return first === i;
+    });
 }
 function renderMailSumBadge() {
   const b = $('#mailSumBadge');
@@ -3977,7 +3985,7 @@ function renderMailView() {
       const ats = x.sum.atts.length;
       return `${head}<div class="mv-item ${MV.sel === x.mail.id ? 'cur' : ''} ${x.done ? 'done' : ''}" data-mvid="${h(x.mail.id)}">
         <span class="mv-cat c-${x.sum.cat}">${h(x.sum.cat === 'due' ? '기한' : CAT_LABEL[x.sum.cat])}</span>
-        <div class="mv-it"><div class="mv-r1"><b>${x.mail.source === 'sms' ? '💬 ' : ''}${h(x.mail.from || '')}</b><span>${h((x.mail.received || '').slice(11, 16))}${x.done ? ' ✓완료' : ''}</span></div>
+        <div class="mv-it"><div class="mv-r1"><b>${x.mail.source === 'sms' ? '💬 ' : ''}${h(x.mail.from || '')}</b><span>${x.more ? `<i class="mv-more">+${x.more}</i> ` : ''}${h((x.mail.received || '').slice(11, 16))}${x.done ? ' ✓완료' : ''}</span></div>
           <div class="mv-sub ${x.mail.unread ? '' : 'read'}">${h(x.sum.title)}</div>
           ${x.sum.gist ? `<div class="mv-g">${h(x.sum.gist)}</div>` : ''}
           <div class="mv-tags">${x.co.name ? `<span class="mv-co-t">${h(x.co.name)}</span>` : ''}${due ? `<span class="mv-tag d">📅 ${h(dueTxt(due))}</span>` : ''}${ats ? `<span class="mv-tag">📎 ${ats === 1 ? h(x.sum.atts[0]) : ats}</span>` : ''}${x.sum.requests.length ? `<span class="mv-tag">요청 ${x.sum.requests.length}</span>` : ''}</div>
@@ -3997,7 +4005,7 @@ function renderMailView() {
         <button type="button" class="btn ${x.done ? '' : 'primary'}" data-mvdone>${x.done ? '완료 취소' : '✓ 완료'}</button></div>
       <div class="mv-scroll">
       <div class="mv-sum">
-        <div><h4>요지</h4><div class="mv-gist">${h(x.sum.gist || '(본문 없음)')}</div></div>
+        <div><h4>${x.mail.source === 'sms' ? '최근 문자 요지' : '요지'}</h4><div class="mv-gist">${h(x.sum.gist || '(본문 없음)')}</div></div>
         ${x.sum.requests.length ? `<div><h4>요청 사항</h4><ul>${x.sum.requests.map((r) => `<li>${h(r)}</li>`).join('')}</ul></div>` : ''}
         ${
           x.sum.dues.length
@@ -4011,7 +4019,8 @@ function renderMailView() {
         }
         ${x.sum.atts.length ? `<div><h4>첨부</h4><div class="mv-att">${x.sum.atts.map((n) => `<span>📎 ${h(n)}${readAtts.has(n) ? ' · 읽음' : ''}</span>`).join('')}</div></div>` : ''}
       </div>
-      <details class="mv-orig" open><summary>원문</summary><div>${highlightHtml((mb?.body || stripQuoted(x.mail.body || '')).slice(0, 6000), hits, h)}</div>${[].concat(x.mail.attText || [])
+      ${x.mail.source === 'sms' ? `<div class="mv-thread" id="mv-thread" data-tid="${h(x.mail.id)}"><div class="mv-th-h">대화 기록 · ${h(x.mail.from || '')}</div><div class="muted small" style="padding:10px">불러오는 중…</div></div>` : ''}
+      <details class="mv-orig" ${x.mail.source === 'sms' ? '' : 'open'}><summary>원문</summary><div>${highlightHtml((mb?.body || stripQuoted(x.mail.body || '')).slice(0, 6000), hits, h)}</div>${[].concat(x.mail.attText || [])
         .map((a) => `<div class="mv-attt">📎 ${h(a.name)}</div><div>${highlightHtml(a.text.slice(0, 3000), hits, h)}</div>`)
         .join('')}</details>
       </div>
@@ -4036,6 +4045,8 @@ function renderMailView() {
   const focusQ = document.activeElement?.id === 'mv-q';
   root.innerHTML = html;
   root.querySelector('.mv-ls').scrollTop = keepScroll;
+  const th = $('#mv-thread', root);
+  if (th) loadThread(th);
   if (focusQ) {
     const qi = $('#mv-q', root);
     qi.focus();
@@ -4266,5 +4277,46 @@ function openClipChooser({ text = '', app = '', copied = false } = {}) {
       $('[data-mk="event"]', el).click();
     }
   });
+}
+
+/* 같은 번호와 주고받은 문자 기록 (휴대폰과 연결 앱처럼) */
+const threadCache = new Map();
+async function loadThread(el) {
+  const id = el.dataset.tid;
+  let msgs = threadCache.get(id);
+  if (!msgs) {
+    const r = await window.api.phone.thread({ id, limit: 80 });
+    const res = r.ok ? r.data : { ok: false };
+    if (!res.ok) {
+      if (el.isConnected) el.querySelector('.muted').textContent = '대화 기록을 불러오지 못했습니다.';
+      return;
+    }
+    msgs = res.messages;
+    threadCache.set(id, msgs);
+    setTimeout(() => threadCache.delete(id), 60000);
+  }
+  if (!el.isConnected || el.dataset.tid !== id) return;
+  const t = D.today();
+  const dayLabel = (d) => (d === t ? '오늘' : d === D.addDays(t, -1) ? '어제' : `${+d.slice(5, 7)}월 ${+d.slice(8, 10)}일 (${'일월화수목금토'[D.dow(d)]})`);
+  const tm = (at) => {
+    const hh = +at.slice(11, 13);
+    return `${hh < 12 ? '오전' : '오후'} ${hh % 12 || 12}:${at.slice(14, 16)}`;
+  };
+  let last = '';
+  let prevMin = '';
+  const html = msgs
+    .map((m) => {
+      const d = m.at.slice(0, 10);
+      const sep = d !== last ? `<div class="mv-th-day">${h(dayLabel(d))}</div>` : '';
+      last = d;
+      const min = `${m.sent}|${m.at.slice(0, 16)}`;
+      const head = min !== prevMin ? `<div class="mv-th-t">${m.sent ? '' : `${h(el.querySelector('.mv-th-h').textContent.replace(/^대화 기록 · /, ''))} `}${h(tm(m.at))}</div>` : '';
+      prevMin = min;
+      return `${sep}<div class="mv-th-m ${m.sent ? 'me' : ''} ${m.id === id ? 'cur' : ''}">${head}<div class="b">${h(m.body)}</div></div>`;
+    })
+    .join('');
+  el.innerHTML = `<div class="mv-th-h">${el.querySelector('.mv-th-h').innerHTML} <span class="muted">· ${msgs.length}건</span></div><div class="mv-th-l">${html || '<div class="muted small">기록이 없습니다.</div>'}</div>`;
+  const l = el.querySelector('.mv-th-l');
+  l.scrollTop = l.scrollHeight;
 }
 
