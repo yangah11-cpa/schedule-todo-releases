@@ -3811,8 +3811,33 @@ function mvState() {
   v.over ||= {};
   return v;
 }
-const MV = { tab: 'main', cat: 'all', co: '', q: '', showDone: false, sel: null };
+const MV = { tab: 'main', cat: 'all', co: '', q: '', showDone: false, sel: null, src: 'all' };
 const mvVisible = () => MV.tab === 'mail';
+/** 휴대폰과 연결(Phone Link) 문자 읽기 */
+let smsBusy = false;
+async function loadSms() {
+  if (smsBusy || mvState().sms === false) return;
+  smsBusy = true;
+  try {
+    const r = await window.api.phone.messages({ days: Math.max(mvState().days, 3) });
+    const res = r.ok ? r.data : { ok: false, error: r.error };
+    if (res.ok) {
+      S.smsList = res.messages.map((m) => {
+        const first = m.body.split('\n').map((l) => l.trim()).find(Boolean) || '';
+        return { ...m, subject: m.subject || first.slice(0, 60), atts: [], unread: false };
+      });
+      S.smsErr = null;
+    } else {
+      S.smsList = [];
+      S.smsErr = res.code === 'noPhoneLink' ? '휴대폰과 연결 앱의 문자를 찾지 못했습니다.' : `문자를 읽지 못했습니다: ${res.error || res.code}`;
+    }
+    sumCache.clear();
+  } finally {
+    smsBusy = false;
+    renderMailSumBadge();
+    if (mvVisible()) renderMailView();
+  }
+}
 function mvClients() {
   return [...companyNames(), ...Object.values(mvState().domains)];
 }
@@ -3823,7 +3848,8 @@ function mvItems() {
   const now = `${today}T${String(nd.getHours()).padStart(2, '0')}:${String(nd.getMinutes()).padStart(2, '0')}`;
   const since = D.addDays(today, -(v.days - 1));
   const clients = mvClients();
-  return (S.mailList || [])
+  const src = [...(MV.src !== 'sms' ? S.mailList || [] : []), ...(MV.src !== 'mail' && v.sms !== false ? S.smsList || [] : [])];
+  return src
     .filter((m) => (m.received || '').slice(0, 10) >= since)
     .map((m) => {
       let x = sumCache.get(m.id);
@@ -3831,10 +3857,21 @@ function mvItems() {
         const mail = { ...m, body: [m.body || '', ...[].concat(m.attText || []).map((a) => a.text)].join('\n\n') };
         // 요지·요청은 본문, 기한·일정은 본문 + 첨부(attText)에서
         x = { mail: m, sum: summarize(m, today, now), mailForCo: mail };
+        if (m.source === 'sms') {
+          // 문자: 첫 줄을 제목으로, 연락처에 없는 [Web발신]은 알림으로
+          x.sum.title = (m.subject || '').replace(/^\[[^\]]{1,12}\]\s*/, '') || '(문자)';
+          if (m.web && !m.contact && x.sum.cat === 'info') x.sum.cat = 'auto';
+        }
         sumCache.set(m.id, x);
       }
       const ov = v.over[m.id];
-      x.co = ov ? { name: ov, by: 'user' } : x.sum.cat === 'auto' ? { name: '', by: 'auto' } : companyOf(x.mailForCo, clients, v.domains);
+      x.co = ov
+        ? { name: ov, by: 'user' }
+        : x.sum.cat === 'auto'
+          ? { name: '', by: 'auto' }
+          : m.company
+            ? { name: m.company, by: 'contact' }
+            : companyOf(x.mailForCo, clients, v.domains);
       x.done = !!v.done[m.id];
       return x;
     })
@@ -3843,7 +3880,7 @@ function mvItems() {
 function renderMailSumBadge() {
   const b = $('#mailSumBadge');
   if (!b) return;
-  const n = S.mailList ? mvItems().filter((x) => !x.done && (x.sum.cat === 'request' || x.sum.cat === 'due')).length : 0;
+  const n = S.mailList || S.smsList ? mvItems().filter((x) => !x.done && (x.sum.cat === 'request' || x.sum.cat === 'due')).length : 0;
   b.hidden = !n;
   b.textContent = n;
 }
@@ -3856,6 +3893,10 @@ function setAppTab(t) {
     renderMailView();
     // 처음 열거나 10분 넘게 지났으면 새로 읽기
     if (!S.mailList || Date.now() - (S.mailListAt || 0) > 10 * 60000) scanMail(true, true);
+    if (!S.smsList || Date.now() - (S.smsAt || 0) > 2 * 60000) {
+      S.smsAt = Date.now();
+      loadSms();
+    }
   } else renderAll();
 }
 const fmtDay = (d) => {
@@ -3899,15 +3940,16 @@ function renderMailView() {
       <select class="inp mv-sel mv-co" id="mv-co"><option value="">🏢 회사: 전체 (${shown0.length})</option>${cos
         .map(([n, c]) => `<option value="${h(n)}" ${MV.co === n ? 'selected' : ''}>🏢 ${h(n)} (${c})</option>`)
         .join('')}${coCount.get('') ? `<option value="__none" ${MV.co === '__none' ? 'selected' : ''}>회사 미확인 (${coCount.get('')})</option>` : ''}</select>
+      <select class="inp mv-sel" id="mv-src"><option value="all" ${MV.src === 'all' ? 'selected' : ''}>메일 + 문자</option><option value="mail" ${MV.src === 'mail' ? 'selected' : ''}>✉ 메일만</option><option value="sms" ${MV.src === 'sms' ? 'selected' : ''}>💬 문자만</option></select>
       ${['all', 'request', 'due', 'info', 'auto']
         .map((c) => `<button type="button" class="mv-chip ${MV.cat === c ? 'on' : ''}" data-mvcat="${c}">${c === 'all' ? '전체' : CAT_LABEL[c]}<em>${cnt[c]}</em></button>`)
         .join('')}
       <input class="inp mv-q" id="mv-q" placeholder="🔍 보낸 사람·제목 검색" value="${h(MV.q)}">
       <label class="checkline small"><input type="checkbox" id="mv-done" ${MV.showDone ? 'checked' : ''}>완료한 메일도 보기</label>
-      <div class="spacer"></div><span class="small muted">${h(status)}</span>
+      <div class="spacer"></div>${S.smsErr && MV.src !== 'mail' ? `<span class="small muted" title="${h(S.smsErr)}">💬 문자 없음</span>` : ''}<span class="small muted">${h(status)}</span>
       <button type="button" class="btn" data-mvrefresh ${S.mailLoading ? 'disabled' : ''}>↻ 새로고침</button>
     </div>`;
-  if (!S.mailList) {
+  if (!S.mailList && !S.smsList) {
     html += `<div class="mv-empty">${S.mailLoading ? 'Outlook 받은 편지함을 읽는 중입니다…' : h(m.lastError || 'Outlook 받은 편지함을 읽어 옵니다.')}<br><br>${S.mailLoading ? '' : '<button type="button" class="btn primary" data-mvrefresh>불러오기</button>'}</div>`;
     root.innerHTML = html;
     return;
@@ -3923,7 +3965,7 @@ function renderMailView() {
       const ats = x.sum.atts.length;
       return `${head}<div class="mv-item ${MV.sel === x.mail.id ? 'cur' : ''} ${x.done ? 'done' : ''}" data-mvid="${h(x.mail.id)}">
         <span class="mv-cat c-${x.sum.cat}">${h(x.sum.cat === 'due' ? '기한' : CAT_LABEL[x.sum.cat])}</span>
-        <div class="mv-it"><div class="mv-r1"><b>${h(x.mail.from || '')}</b><span>${h((x.mail.received || '').slice(11, 16))}${x.done ? ' ✓완료' : ''}</span></div>
+        <div class="mv-it"><div class="mv-r1"><b>${x.mail.source === 'sms' ? '💬 ' : ''}${h(x.mail.from || '')}</b><span>${h((x.mail.received || '').slice(11, 16))}${x.done ? ' ✓완료' : ''}</span></div>
           <div class="mv-sub ${x.mail.unread ? '' : 'read'}">${h(x.sum.title)}</div>
           ${x.sum.gist ? `<div class="mv-g">${h(x.sum.gist)}</div>` : ''}
           <div class="mv-tags">${x.co.name ? `<span class="mv-co-t">${h(x.co.name)}</span>` : ''}${due ? `<span class="mv-tag d">📅 ${h(dueTxt(due))}</span>` : ''}${ats ? `<span class="mv-tag">📎 ${ats === 1 ? h(x.sum.atts[0]) : ats}</span>` : ''}${x.sum.requests.length ? `<span class="mv-tag">요청 ${x.sum.requests.length}</span>` : ''}</div>
@@ -3938,8 +3980,8 @@ function renderMailView() {
     const hits = x.sum.dues.flatMap((d) => d.hits || []);
     const readAtts = new Set([].concat(x.mail.attText || []).map((a) => a.name));
     det = `<div class="mv-dh"><div style="flex:1;min-width:0"><h2>${h(x.sum.title)}</h2>
-        <div class="mv-m">${x.co.name ? `<span class="mv-co-t">${h(x.co.name)}</span> ` : ''}${h(x.mail.from || '')}${x.mail.fromAddr && !/^\/o=/i.test(x.mail.fromAddr) ? ` &lt;${h(x.mail.fromAddr)}&gt;` : ''} · ${h(fmtDay((x.mail.received || '').slice(0, 10)).replace(/^(오늘|어제) · /, ''))} ${h((x.mail.received || '').slice(11, 16))} · <button type="button" class="linkbtn" data-mvco>${x.co.name ? '회사 바꾸기' : '회사 지정'}</button></div></div>
-        <button type="button" class="btn" data-mvopen>Outlook에서 열기</button>
+        <div class="mv-m">${x.co.name ? `<span class="mv-co-t">${h(x.co.name)}</span> ` : ''}${h(x.mail.from || '')}${x.mail.fromAddr && !/^\/o=/i.test(x.mail.fromAddr) && x.mail.fromAddr !== x.mail.from ? ` &lt;${h(x.mail.fromAddr)}&gt;` : ''} · ${h(fmtDay((x.mail.received || '').slice(0, 10)).replace(/^(오늘|어제) · /, ''))} ${h((x.mail.received || '').slice(11, 16))} · <button type="button" class="linkbtn" data-mvco>${x.co.name ? '회사 바꾸기' : '회사 지정'}</button></div></div>
+        ${x.mail.source === 'sms' ? '<span class="mv-tag" style="align-self:center">💬 휴대폰 문자</span>' : '<button type="button" class="btn" data-mvopen>Outlook에서 열기</button>'}
         <button type="button" class="btn ${x.done ? '' : 'primary'}" data-mvdone>${x.done ? '완료 취소' : '✓ 완료'}</button></div>
       <div class="mv-scroll">
       <div class="mv-sum">
@@ -3979,7 +4021,7 @@ function mvCurrent() {
 }
 function mvMake(kind, x, due) {
   const d = due || x.sum.dues.find((y) => y.date) || null;
-  const memo = `메일: ${x.mail.subject || ''}\n보낸 사람: ${x.mail.from || ''} (${(x.mail.received || '').slice(0, 16).replace('T', ' ')})${x.sum.gist ? `\n${x.sum.gist}` : ''}`;
+  const memo = `${x.mail.source === 'sms' ? '문자' : '메일'}: ${x.mail.subject || ''}\n보낸 사람: ${x.mail.from || ''} (${(x.mail.received || '').slice(0, 16).replace('T', ' ')})${x.sum.gist ? `\n${x.sum.gist}` : ''}`;
   const title = x.co.name && !x.sum.title.includes(x.co.name) ? `${x.co.name} ${x.sum.title}` : x.sum.title;
   if (kind === 'todo') return openTodoDialog(null, { title, due: d?.date || null, time: d?.startTime || '', memo });
   const st = d?.startTime || '09:00';
@@ -4050,7 +4092,11 @@ function bindMailView() {
       MV.cat = c.dataset.mvcat;
       return renderMailView();
     }
-    if (e.target.closest('[data-mvrefresh]')) return scanMail(true, true);
+    if (e.target.closest('[data-mvrefresh]')) {
+      S.smsAt = Date.now();
+      loadSms();
+      return scanMail(true, true);
+    }
     const x = mvCurrent();
     if (!x) return;
     if (e.target.closest('[data-mvdone]')) {
@@ -4079,6 +4125,9 @@ function bindMailView() {
       v.days = +e.target.value;
       save();
       if (v.days > mailState().days && Date.now() - (S.mailListAt || 0) > 0) scanMail(true, true);
+      renderMailView();
+    } else if (e.target.id === 'mv-src') {
+      MV.src = e.target.value;
       renderMailView();
     } else if (e.target.id === 'mv-co') {
       MV.co = e.target.value;
