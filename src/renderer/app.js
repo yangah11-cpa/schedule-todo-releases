@@ -4966,7 +4966,7 @@ function openClipChooser({ text = '', app = '', copied = false } = {}) {
   const { el, close } = openModal(
     `<div class="mhead"><h1>${h(src)}에서 일정·할 일 만들기</h1><button type="button" class="btn ghost icon" data-x aria-label="닫기">✕</button></div>
      <div class="mbody">
-       <div class="small muted">${copied ? '선택한 글을 복사해 왔습니다.' : '방금 복사해 둔 글입니다.'} 고쳐서 쓸 수 있습니다.</div>
+       <div class="small muted">${copied ? '선택한 글을 복사해 왔습니다.' : '선택한 글이 없어 복사해 둔 글을 가져왔습니다.'} 고쳐서 쓸 수 있습니다.</div>
        <div class="fld" style="margin-top:8px"><label class="lbl" for="cp-title">제목</label><input class="inp" id="cp-title"></div>
        <div class="fld" style="margin-top:8px"><label class="lbl" for="cp-t">내용</label><textarea class="inp" id="cp-t" rows="7">${h(text.slice(0, 4000))}</textarea></div>
        <div class="pk-found" id="cp-found"></div>

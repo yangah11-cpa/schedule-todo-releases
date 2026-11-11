@@ -310,16 +310,19 @@ app.whenReady().then(() => {
       if (!win || win.isDestroyed() || hotBusy) return;
       hotBusy = true;
       try {
-        // 누른 순간 앞에 있던 프로그램: Outlook → 선택한 메일, 카카오톡 → 선택한 글 복사, 그 밖 → 복사해 둔 글
+        // 누른 순간 앞에 있던 프로그램: Outlook → 선택한 메일, 그 밖 → 선택한 글(자동 복사), 선택이 없으면 복사해 둔 글
         const before = clipboard.readText();
-        const fg = await require('./foreground').foregroundApp({ copyIfKakao: true });
-        const isOutlook = /outlook/i.test(fg);
+        const r = await require('./foreground').foregroundApp({ copy: true });
+        const fg = r.name;
+        const isOutlook = /^outlook$/i.test(fg);
         const text = isOutlook ? '' : clipboard.readText();
+        // 자동 복사로 바뀐 클립보드는 원래대로 돌려놓음 (사용자가 복사해 둔 것 보존)
+        if (r.copied && before && text !== before) setTimeout(() => clipboard.writeText(before), 300);
         win.setAlwaysOnTop(true); // 다른 창 위로 확실히 올리기
         showWindow();
         setTimeout(() => !win.isDestroyed() && win.setAlwaysOnTop(false), 400);
         if (isOutlook) win.webContents.send('outlook:pick');
-        else win.webContents.send('clip:pick', { text, app: fg, copied: text !== before });
+        else win.webContents.send('clip:pick', { text, app: fg, copied: r.copied && text !== before });
       } finally {
         hotBusy = false;
       }
