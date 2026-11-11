@@ -418,3 +418,16 @@ input[type="time"]::-webkit-calendar-picker-indicator { display: none; }
 .mv-attt { margin: 12px 0 4px; padding: 5px 10px; background: #F7F6F3; border-radius: 6px; font-weight: 600; font-size: 12.5px; }
 .mv-foot { display: flex; gap: 8px; justify-content: flex-end; border-top: 1px solid var(--line); padding-top: 10px; }
 .mv-empty { margin: auto; text-align: center; color: var(--muted); padding: 40px; }
+/* 메일·문자 목록: 위 탭 + 기간·회사 */
+.mv-list { display: flex; flex-direction: column; overflow: hidden; }
+.mv-ls { flex: 1; min-height: 0; overflow-y: auto; }
+.mv-lh { flex: 0 0 auto; border-bottom: 1px solid var(--line); background: #fff; }
+.mv-stabs { display: flex; border-bottom: 1px solid var(--line); }
+.mv-stabs button { flex: 1; border: 0; background: none; font: inherit; font-size: 13.5px; font-weight: 600; color: var(--muted); padding: 10px 0 9px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.mv-stabs button em { font-style: normal; font-weight: 500; opacity: 0.7; margin-left: 5px; font-size: 12px; }
+.mv-stabs button.on { color: var(--accent); border-bottom-color: var(--accent); }
+.mv-stabs button:hover { background: #F8F7F4; }
+.mv-lf { display: flex; gap: 6px; padding: 8px 10px; }
+.mv-lf .mv-sel { height: 32px; }
+.mv-lf #mv-days { flex: 0 0 auto; }
+.mv-lf .mv-co { flex: 1; min-width: 0; max-width: none; }

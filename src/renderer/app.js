@@ -3860,7 +3860,7 @@ function mvItems() {
   const now = `${today}T${String(nd.getHours()).padStart(2, '0')}:${String(nd.getMinutes()).padStart(2, '0')}`;
   const since = D.addDays(today, -(v.days - 1));
   const clients = mvClients();
-  const src = [...(MV.src !== 'sms' ? S.mailList || [] : []), ...(MV.src !== 'mail' && v.sms !== false ? S.smsList || [] : [])];
+  const src = [...(S.mailList || []), ...(v.sms !== false ? S.smsList || [] : [])];
   return src
     .filter((m) => (m.received || '').slice(0, 10) >= since)
     .map((m) => {
@@ -3934,7 +3934,9 @@ function renderMailView() {
   if (MV.co && MV.co !== '__none' && !coCount.has(MV.co)) MV.co = '';
   const byCo = shown0.filter((x) => !MV.co || (MV.co === '__none' ? !x.co.name : x.co.name === MV.co));
   const q = MV.q.trim().toLowerCase();
-  const byQ = q ? byCo.filter((x) => `${x.mail.from} ${x.mail.subject} ${x.sum.gist} ${x.co.name}`.toLowerCase().includes(q)) : byCo;
+  const byQ0 = q ? byCo.filter((x) => `${x.mail.from} ${x.mail.subject} ${x.sum.gist} ${x.co.name}`.toLowerCase().includes(q)) : byCo;
+  const srcCnt = { all: byQ0.length, mail: byQ0.filter((x) => x.mail.source !== 'sms').length, sms: byQ0.filter((x) => x.mail.source === 'sms').length };
+  const byQ = MV.src === 'all' ? byQ0 : byQ0.filter((x) => (MV.src === 'sms') === (x.mail.source === 'sms'));
   const cnt = { all: byQ.length, request: 0, due: 0, info: 0, auto: 0 };
   for (const x of byQ) cnt[x.sum.cat]++;
   const list = byQ.filter((x) => MV.cat === 'all' || x.sum.cat === MV.cat);
@@ -3948,11 +3950,6 @@ function renderMailView() {
         ? `${new Date(S.mailListAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })} 확인`
         : '';
   let html = `<div class="mv-bar">
-      <select class="inp mv-sel" id="mv-days">${[1, 3, 7, 14].map((d) => `<option value="${d}" ${v.days === d ? 'selected' : ''}>${d === 1 ? '오늘' : `최근 ${d}일`}</option>`).join('')}</select>
-      <select class="inp mv-sel mv-co" id="mv-co"><option value="">🏢 회사: 전체 (${shown0.length})</option>${cos
-        .map(([n, c]) => `<option value="${h(n)}" ${MV.co === n ? 'selected' : ''}>🏢 ${h(n)} (${c})</option>`)
-        .join('')}${coCount.get('') ? `<option value="__none" ${MV.co === '__none' ? 'selected' : ''}>회사 미확인 (${coCount.get('')})</option>` : ''}</select>
-      <select class="inp mv-sel" id="mv-src"><option value="all" ${MV.src === 'all' ? 'selected' : ''}>메일 + 문자</option><option value="mail" ${MV.src === 'mail' ? 'selected' : ''}>✉ 메일만</option><option value="sms" ${MV.src === 'sms' ? 'selected' : ''}>💬 문자만</option></select>
       ${['all', 'request', 'due', 'info', 'auto']
         .map((c) => `<button type="button" class="mv-chip ${MV.cat === c ? 'on' : ''}" data-mvcat="${c}">${c === 'all' ? '전체' : CAT_LABEL[c]}<em>${cnt[c]}</em></button>`)
         .join('')}
@@ -4017,11 +4014,25 @@ function renderMailView() {
       </div>
       <div class="mv-foot"><button type="button" class="btn" data-mvmk="todo">할 일로</button><button type="button" class="btn primary" data-mvmk="event">일정으로</button></div>`;
   }
-  html += `<div class="mv-body"><div class="mv-list">${items || '<div class="mv-empty small">해당하는 메일이 없습니다.</div>'}</div><div class="mv-detail">${det}</div></div>`;
-  const keepScroll = root.querySelector('.mv-list')?.scrollTop || 0;
+  const lhead = `<div class="mv-lh">
+      <div class="mv-stabs">${[
+        ['all', '전체'],
+        ['mail', '✉ 메일'],
+        ['sms', '💬 문자'],
+      ]
+        .map(([k, l]) => `<button type="button" class="${MV.src === k ? 'on' : ''}" data-mvsrc="${k}">${l}<em>${srcCnt[k]}</em></button>`)
+        .join('')}</div>
+      <div class="mv-lf">
+        <select class="inp mv-sel" id="mv-days">${[1, 3, 7, 14].map((d) => `<option value="${d}" ${v.days === d ? 'selected' : ''}>${d === 1 ? '오늘' : `최근 ${d}일`}</option>`).join('')}</select>
+        <select class="inp mv-sel mv-co" id="mv-co"><option value="">🏢 회사: 전체 (${shown0.length})</option>${cos
+          .map(([n, c]) => `<option value="${h(n)}" ${MV.co === n ? 'selected' : ''}>🏢 ${h(n)} (${c})</option>`)
+          .join('')}${coCount.get('') ? `<option value="__none" ${MV.co === '__none' ? 'selected' : ''}>회사 미확인 (${coCount.get('')})</option>` : ''}</select>
+      </div></div>`;
+  html += `<div class="mv-body"><div class="mv-list">${lhead}<div class="mv-ls">${items || `<div class="mv-empty small">해당하는 ${MV.src === 'sms' ? '문자' : MV.src === 'mail' ? '메일' : '메일·문자'}가 없습니다.</div>`}</div></div><div class="mv-detail">${det}</div></div>`;
+  const keepScroll = root.querySelector('.mv-ls')?.scrollTop || 0;
   const focusQ = document.activeElement?.id === 'mv-q';
   root.innerHTML = html;
-  root.querySelector('.mv-list').scrollTop = keepScroll;
+  root.querySelector('.mv-ls').scrollTop = keepScroll;
   if (focusQ) {
     const qi = $('#mv-q', root);
     qi.focus();
@@ -4097,6 +4108,11 @@ function bindMailView() {
     const it = e.target.closest('[data-mvid]');
     if (it) {
       MV.sel = it.dataset.mvid;
+      return renderMailView();
+    }
+    const st = e.target.closest('[data-mvsrc]');
+    if (st) {
+      MV.src = st.dataset.mvsrc;
       return renderMailView();
     }
     const c = e.target.closest('[data-mvcat]');

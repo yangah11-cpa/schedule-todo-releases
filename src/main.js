@@ -344,7 +344,10 @@ function watchPatch() {
   const check = () => {
     try {
       const v = JSON.parse(fs.readFileSync(pkg, 'utf8')).version;
-      if (v && newer(v, info.version) && fs.existsSync(path.join(info.patchDir, 'src', 'main.js')) && patchReady !== v) {
+      // 필수 파일이 모두 있을 때만 "변경사항 적용"을 띄움 (파일을 넣는 중이거나 빠진 경우 대기)
+      const core = ['main.js', 'google.js', 'preload.js', 'pushhub.js', 'renderer/index.html', 'renderer/app.js', 'renderer/styles.css'];
+      const complete = core.every((f) => fs.existsSync(path.join(info.patchDir, 'src', f)));
+      if (v && newer(v, info.version) && complete && patchReady !== v) {
         patchReady = v;
         if (win && !win.isDestroyed()) win.webContents.send('patch:ready', v);
       }
