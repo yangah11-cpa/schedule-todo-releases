@@ -4494,15 +4494,6 @@ function renderMailView() {
       ]
         .map(([k, l]) => `<button type="button" class="${MV.src === k ? 'on' : ''}" data-mvsrc="${k}" data-src="${k}">${k === 'all' ? '' : srcIcon(k)}${l}<em>${srcCnt[k]}</em></button>`)
         .join('')}</div>
-      ${
-        MV.src === 'call'
-          ? `<div class="mv-pickbar">${
-              MV.pick
-                ? `<button type="button" class="btn" data-mvpickall>${list.every((y) => MV.pick.has(y.mail.id)) && list.length ? '선택 해제' : '전체 선택'}</button><span class="small muted">${MV.pick.size}개 선택</span><span class="spacer"></span><button type="button" class="btn" data-mvpickx>취소</button><button type="button" class="btn primary" data-mvpickgo ${MV.pick.size ? '' : 'disabled'}>글로 바꾸기</button>`
-                : `<span class="small muted">${callLeft() ? `글로 바꾸는 중 · 남은 ${callLeft()}개` : ''}</span><span class="spacer"></span><button type="button" class="btn" data-mvpick>☑ 여러 개 선택</button>`
-            }</div>`
-          : ''
-      }
       <div class="mv-lf">
         <select class="inp mv-sel" id="mv-days">${[1, 3, 7, 14, 30].map((d) => `<option value="${d}" ${v.days === d ? 'selected' : ''}>${d === 1 ? '오늘' : `최근 ${d}일`}</option>`).join('')}</select>
         <select class="inp mv-sel mv-co" id="mv-co"><option value="">🏢 회사: 전체 (${shown0.length})</option>${cos
