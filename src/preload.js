@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('api', {
   drive: { save: call('drive:save'), load: call('drive:load') },
   team: { open: call('team:open') },
   phone: { messages: call('phone:messages') },
+  clip: { onPick: (cb) => ipcRenderer.on('clip:pick', (_e, d) => cb(d)) },
   outlook: { read: call('outlook:read'), selected: call('outlook:selected'), open: call('outlook:open'), onPick: (cb) => ipcRenderer.on('outlook:pick', () => cb()) },
   patch: {
     state: call('patch:state'),

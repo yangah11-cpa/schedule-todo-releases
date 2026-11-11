@@ -386,7 +386,12 @@ export function parseShared(raw, today, now) {
     const d = findDates(text, today).find((x) => (x.endDate || x.date) >= today);
     if (d) c = { date: d.date, endDate: d.endDate || d.date, allDay: true, startTime: null, endTime: null, hits: [{ t: text.slice(d.idx, d.idx + d.len) }], snippet: first };
   }
-  const place = c?.place || findPlace(text);
+  // "본사 3층 회의실에서"처럼 장소 표시 없이 쓴 장소
+  const loose = (text.match(/((?:[가-힣A-Za-z0-9]+\s){0,3}[가-힣A-Za-z0-9]*(?:회의실|사무실|사무소|층|호실|역|카페|센터|빌딩|타워|본사|지점|공장|식당|호텔))\s*(?:에서|으로|로)(?=\s|$)/) || [])[1] || '';
+  // 앞에 붙은 날짜·시간 말("내일 12시")은 빼기
+  const looseW = loose.trim().split(/\s+/);
+  while (looseW.length > 1 && /^(?:\d+(?:시|분|일|월)?|반|오전|오후|내일|오늘|모레|다음|이번|주|[월화수목금토일]요일|\d+:\d+)(?:에|에는|반에|쯤|경)?$/.test(looseW[0])) looseW.shift();
+  const place = c?.place || findPlace(text) || looseW.join(' ');
   // 제목: 날짜가 있던 줄에서 날짜·시간 표현을 뺀 나머지
   let title = c?.snippet || first;
   for (const x of c?.hits || []) if (x.k !== 'key' && x.k !== 'place' && x.t) title = title.split(x.t).join(' ');

@@ -3270,6 +3270,7 @@ async function init() {
   setKeywords(keywordsOf(kwStore()));
   setTimeout(() => syncKw(), 8000); // 휴대폰과 단어 목록 맞추기
   window.api.outlook.onPick?.(() => pickOutlookMail());
+  window.api.clip?.onPick?.((d) => openClipChooser(d));
   bindMailView();
   setTimeout(() => mailState().enabled && scanMail(), 20000); // 시작 20초 뒤 첫 확인
   setInterval(() => mailState().enabled && scanMail(), 30 * 60 * 1000); // 30분마다
@@ -4156,6 +4157,83 @@ function bindMailView() {
       MV.sel = n;
       renderMailView();
       $('#mailView .mv-item.cur')?.scrollIntoView({ block: 'nearest' });
+    }
+  });
+}
+
+/* ───────────── 카카오톡 등에서 복사한 글 → 일정 / 할 일 (Ctrl+Shift+E) ───────────── */
+function openClipChooser({ text = '', app = '', copied = false } = {}) {
+  const isKakao = /kakao/i.test(app);
+  const src = isKakao ? '카카오톡' : app && !/electron|일정/i.test(app) ? app : '복사한 글';
+  if (!text.trim()) {
+    toast(isKakao ? '카톡 메시지를 복사(오른쪽 클릭 → 복사)한 뒤 Ctrl+Shift+E를 눌러 주세요.' : '복사한 글이 없습니다. 글을 복사한 뒤 Ctrl+Shift+E를 눌러 주세요.');
+    return;
+  }
+  const today = D.today();
+  const nd = new Date();
+  const now = `${today}T${String(nd.getHours()).padStart(2, '0')}:${String(nd.getMinutes()).padStart(2, '0')}`;
+  const { el, close } = openModal(
+    `<div class="mhead"><h1>${h(src)}에서 일정·할 일 만들기</h1><button type="button" class="btn ghost icon" data-x aria-label="닫기">✕</button></div>
+     <div class="mbody">
+       <div class="small muted">${copied ? '선택한 글을 복사해 왔습니다.' : '방금 복사해 둔 글입니다.'} 고쳐서 쓸 수 있습니다.</div>
+       <div class="fld" style="margin-top:8px"><label class="lbl" for="cp-title">제목</label><input class="inp" id="cp-title"></div>
+       <div class="fld" style="margin-top:8px"><label class="lbl" for="cp-t">내용</label><textarea class="inp" id="cp-t" rows="7">${h(text.slice(0, 4000))}</textarea></div>
+       <div class="pk-found" id="cp-found"></div>
+     </div>
+     <div class="mfoot"><span class="note">Outlook에서는 선택한 메일, 카톡에서는 선택한 글</span><div class="spacer"></div>
+       <button type="button" class="btn" data-x>취소</button>
+       <button type="button" class="btn" data-mk="todo">할 일로</button>
+       <button type="button" class="btn primary" data-mk="event">일정으로</button></div>`,
+    { cls: 'wide' }
+  );
+  const ta = $('#cp-t', el);
+  const ti = $('#cp-title', el);
+  let titleTouched = false;
+  ti.addEventListener('input', () => (titleTouched = true));
+  const d = (x) => `${+x.slice(5, 7)}/${+x.slice(8, 10)}(${'일월화수목금토'[D.dow(x)]})`;
+  const show = () => {
+    const r = parseShared(ta.value, today, now);
+    if (!titleTouched) ti.value = r.title;
+    const f = $('#cp-found', el);
+    f.className = `pk-found ${r.found ? '' : 'none'}`;
+    f.innerHTML = r.found
+      ? `<b>찾은 날짜</b> ${h(d(r.date))}${r.endDate !== r.date ? ` ~ ${h(d(r.endDate))}` : ''}${r.startTime ? ` ${h(r.startTime)}${r.endTime ? `~${h(r.endTime)}` : ''}` : ' 종일'}${r.place ? ` · ${h(r.place)}` : ''}`
+      : '날짜를 찾지 못했습니다. 다음 창에서 직접 고르세요.';
+    return r;
+  };
+  ta.addEventListener('input', show);
+  show();
+  setTimeout(() => ti.select(), 0);
+  el.addEventListener('click', (e) => {
+    if (e.target.closest('[data-x]')) return close();
+    const b = e.target.closest('[data-mk]');
+    if (!b) return;
+    const r = show();
+    const title = ti.value.trim() || r.title;
+    const memo = `${src}: ${ta.value.trim()}`.slice(0, 1500);
+    close();
+    if (b.dataset.mk === 'todo') return openTodoDialog(null, { title, due: r.found ? r.date : null, time: r.startTime || '', memo });
+    const st = r.startTime || '09:00';
+    const [hh, mm] = st.split(':').map(Number);
+    const v = Math.min(hh * 60 + mm + 60, 23 * 60 + 59);
+    openEventDialog({
+      date: r.date,
+      preset: {
+        title,
+        date: r.date,
+        endDate: r.endDate || r.date,
+        allDay: r.allDay,
+        startTime: st,
+        endTime: r.endTime || `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`,
+        place: r.place || '',
+        memo,
+      },
+    });
+  });
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.id === 'cp-title' && !e.isComposing) {
+      e.preventDefault();
+      $('[data-mk="event"]', el).click();
     }
   });
 }

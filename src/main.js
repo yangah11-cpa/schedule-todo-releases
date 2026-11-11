@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Tray, nativeImage, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Tray, nativeImage, globalShortcut, clipboard } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { GoogleCalendar } = require('./google');
@@ -270,12 +270,24 @@ app.whenReady().then(() => {
   ipcMain.handle('phone:messages', wrap((opt) => require('./phonelink').readMessages(opt || {})));
   // Outlook에서 메일을 고른 채 Ctrl+Shift+E → 이 프로그램이 앞으로 나와 그 메일로 일정/할 일 만들기
   try {
-    const ok = globalShortcut.register('CommandOrControl+Shift+E', () => {
-      if (!win || win.isDestroyed()) return;
-      win.setAlwaysOnTop(true); // 다른 창 위로 확실히 올리기
-      showWindow();
-      setTimeout(() => !win.isDestroyed() && win.setAlwaysOnTop(false), 400);
-      win.webContents.send('outlook:pick');
+    let hotBusy = false;
+    const ok = globalShortcut.register('CommandOrControl+Shift+E', async () => {
+      if (!win || win.isDestroyed() || hotBusy) return;
+      hotBusy = true;
+      try {
+        // 누른 순간 앞에 있던 프로그램: Outlook → 선택한 메일, 카카오톡 → 선택한 글 복사, 그 밖 → 복사해 둔 글
+        const before = clipboard.readText();
+        const fg = await require('./foreground').foregroundApp({ copyIfKakao: true });
+        const isOutlook = /outlook/i.test(fg);
+        const text = isOutlook ? '' : clipboard.readText();
+        win.setAlwaysOnTop(true); // 다른 창 위로 확실히 올리기
+        showWindow();
+        setTimeout(() => !win.isDestroyed() && win.setAlwaysOnTop(false), 400);
+        if (isOutlook) win.webContents.send('outlook:pick');
+        else win.webContents.send('clip:pick', { text, app: fg, copied: text !== before });
+      } finally {
+        hotBusy = false;
+      }
     });
     if (!ok) console.warn('단축키 Ctrl+Shift+E를 다른 프로그램이 쓰고 있습니다.');
   } catch {
