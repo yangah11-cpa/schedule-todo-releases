@@ -3355,6 +3355,7 @@ async function scanMail(manual = false, quiet = false) {
       return;
     }
     S.mailList = res.mails || [];
+    S.mailDiag = res.diag || [];
     S.mailListAt = Date.now();
     sumCache.clear();
     const today = D.today();
@@ -3947,7 +3948,9 @@ function renderMailView() {
     : m.lastError && !S.mailList
       ? m.lastError
       : S.mailListAt
-        ? `${new Date(S.mailListAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })} 확인`
+        ? `${new Date(S.mailListAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })} 확인${
+            S.mailList && !S.mailList.length && S.mailDiag?.length ? ` · 메일 0통 (${S.mailDiag.map((d) => `${d.store}: 전체 ${d.total}통`).join(', ')})` : ''
+          }`
         : '';
   let html = `<div class="mv-bar">
       ${['all', 'request', 'due', 'info', 'auto']

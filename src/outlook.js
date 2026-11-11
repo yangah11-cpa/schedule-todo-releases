@@ -32,8 +32,6 @@ try {
     if ($items.Count -eq 0) { Done @{ ok = $false; code = 'noSelection' }; exit }
   } else {
     $ns = $ol.GetNamespace('MAPI')
-    $inbox = $ns.GetDefaultFolder(6)
-    $items = $inbox.Items
   }
   $list = New-Object System.Collections.ArrayList
   function Read-One($m) {
@@ -84,28 +82,43 @@ try {
         }
       }
       [void]$list.Add($o)
-    } catch {}
+    } catch { $script:readErr = $_.Exception.Message }
   }
+  $diag = New-Object System.Collections.ArrayList
   if ($sel) {
     foreach ($m in $items) { Read-One $m }
   } else {
-    # 기간 안의 메일만 골라서(Restrict) 최신순으로 GetFirst/GetNext — foreach는 정렬을 무시할 수 있음
-    $r = $null
-    try { $r = $items.Restrict("@SQL=""urn:schemas:httpmail:datereceived"" >= '" + $since.ToUniversalTime().ToString('yyyy-MM-dd HH:mm') + "'") } catch {}
-    if ($r) { $items = $r }
-    try { $items.Sort('[ReceivedTime]', $true) } catch {}
-    $m = $items.GetFirst()
-    $n = 0
-    while ($m -ne $null -and $list.Count -lt ${max} -and $n -lt 3000) {
-      $n++
-      $old = $false
-      try { if ($m.ReceivedTime -lt $since) { $old = $true } } catch {}
-      if (-not $old) { Read-One $m }
-      $m = $items.GetNext()
+    # 모든 계정(데이터 파일)의 받은 편지함 — 기본 데이터 파일이 비어 있고 회사 메일은 다른 계정에 있는 경우가 많음
+    $inboxes = New-Object System.Collections.ArrayList
+    foreach ($st in $ns.Stores) {
+      try { $f = $st.GetDefaultFolder(6); if ($f) { [void]$inboxes.Add(@{ store = [string]$st.DisplayName; folder = $f }) } } catch {}
+    }
+    if ($inboxes.Count -eq 0) { try { [void]$inboxes.Add(@{ store = 'default'; folder = $ns.GetDefaultFolder(6) }) } catch {} }
+    foreach ($ib in $inboxes) {
+      $before = $list.Count
+      $items = $ib.folder.Items
+      $total = $(try { $items.Count } catch { -1 })
+      # 기간 안의 메일만 골라서(Restrict) 최신순으로 GetFirst/GetNext — foreach는 정렬을 무시할 수 있음
+      $r = $null
+      $rerr = ''
+      try { $r = $items.Restrict("@SQL=""urn:schemas:httpmail:datereceived"" >= '" + $since.ToUniversalTime().ToString('yyyy-MM-dd HH:mm') + "'") } catch { $rerr = $_.Exception.Message }
+      if ($r) { $items = $r }
+      try { $items.Sort('[ReceivedTime]', $true) } catch {}
+      $m = $items.GetFirst()
+      $n = 0
+      $skipOld = 0
+      while ($m -ne $null -and $list.Count -lt ${max} -and $n -lt 3000) {
+        $n++
+        $old = $false
+        try { if ($m.ReceivedTime -lt $since) { $old = $true } } catch {}
+        if ($old) { $skipOld++ } else { Read-One $m }
+        $m = $items.GetNext()
+      }
+      [void]$diag.Add([ordered]@{ store = $ib.store; total = $total; restricted = $(if ($r) { $(try { $r.Count } catch { -1 }) } else { -1 }); restrictError = $rerr; scanned = $n; old = $skipOld; added = $list.Count - $before })
     }
   }
   if ($sel -and $list.Count -eq 0) { Done @{ ok = $false; code = 'notMail' }; exit }
-  Done @{ ok = $true; mails = @($list) }
+  Done @{ ok = $true; mails = @($list); diag = @($diag); readErr = [string]$script:readErr }
 } catch {
   Done @{ ok = $false; code = 'error'; error = $_.Exception.Message }
 }
@@ -121,7 +134,15 @@ const attCache = new Map();
 
 async function readInbox(opt = {}) {
   const r = await readRaw(opt);
-  if (!r?.ok) return r;
+  if (!r?.ok) {
+    try {
+      const { app } = require('electron');
+      fs.writeFileSync(path.join(app.getPath('userData'), 'outlook-diag.json'), JSON.stringify({ at: new Date().toISOString(), opt, error: r }, null, 1));
+    } catch {
+      /* 무시 */
+    }
+    return r;
+  }
   const { extractText, SUPPORTED } = require('./attext');
   for (const m of r.mails || []) {
     if (attCache.has(m.id)) m.attText = attCache.get(m.id);
@@ -140,6 +161,13 @@ async function readInbox(opt = {}) {
       m.attText = texts;
     }
     delete m.attFiles;
+  }
+  // 진단 기록 (메일 내용 없이 개수만)
+  try {
+    const { app } = require('electron');
+    fs.writeFileSync(path.join(app.getPath('userData'), 'outlook-diag.json'), JSON.stringify({ at: new Date().toISOString(), opt, count: (r.mails || []).length, diag: r.diag || [], readErr: r.readErr || '' }, null, 1));
+  } catch {
+    /* 무시 */
   }
   if (r.attDir) fs.rm(r.attDir, { recursive: true, force: true }, () => {});
   delete r.attDir;
