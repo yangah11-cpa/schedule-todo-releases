@@ -3964,6 +3964,7 @@ const sumCache = new Map();
 function mvState() {
   S.data.mailSum ||= { days: 3, done: {}, domains: {}, over: {} };
   const v = S.data.mailSum;
+  v.phones ||= {}; // 번호(뒤 8자리) → 회사
   v.done ||= {};
   v.domains ||= {};
   v.over ||= {};
@@ -4006,7 +4007,8 @@ function callState() {
 const isNum = (w) => /^[\d+\-\s]{7,}$/.test(w || '');
 const fmtPhone = (n) => {
   const d = String(n).replace(/\D/g, '').replace(/^82/, '0');
-  return d.length === 11 ? `${d.slice(0, 3)}-${d.slice(3, 7)}-${d.slice(7)}` : d.length === 10 ? `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}` : d;
+  if (d.startsWith('02') && (d.length === 9 || d.length === 10)) return `02-${d.slice(2, d.length - 4)}-${d.slice(-4)}`;
+  return d.length === 11 ? `${d.slice(0, 3)}-${d.slice(3, 7)}-${d.slice(7)}` : d.length === 10 ? `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}` : d.length === 8 ? `${d.slice(0, 4)}-${d.slice(4)}` : d;
 };
 let callsBusy = false;
 let callLoading = false;
@@ -4275,6 +4277,7 @@ async function aiQueue() {
   }
 }
 setInterval(() => S.data && aiState().on && !S.aiErr && aiQueue(), 15000);
+const phoneKey = (n) => String(n || '').replace(/\D/g, '').replace(/^82/, '0').slice(-8);
 function mvClients() {
   return [...companyNames(), ...Object.values(mvState().domains)];
 }
@@ -4319,8 +4322,11 @@ function mvItems() {
       const ar = aiState().on ? aiRes.get(m.id)?.sum : null;
       x.sum = ar ? (x.aiSum ||= aiToSum(ar, x.rule)) : x.rule;
       const ov = v.over[m.id];
+      const pk = m.source === 'sms' || m.source === 'call' ? phoneKey(m.fromAddr) : '';
       x.co = ov
         ? { name: ov, by: 'user' }
+        : pk && v.phones[pk]
+          ? { name: v.phones[pk], by: 'phone' }
         : x.sum.cat === 'auto'
           ? { name: '', by: 'auto' }
           : m.company
@@ -4621,12 +4627,14 @@ function mvMake(kind, x, due) {
 }
 async function mvSetCompany(x) {
   const v = mvState();
-  const dom = domainOf(x.mail.fromAddr);
+  const pk = x.mail.source === 'sms' || x.mail.source === 'call' ? phoneKey(x.mail.fromAddr) : '';
+  const dom = pk ? '' : domainOf(x.mail.fromAddr);
   const { el, close } = openModal(
     `<div class="mhead"><h1>회사 지정</h1><button type="button" class="btn ghost icon" data-x aria-label="닫기">✕</button></div>
      <div class="mbody">
        <div class="fld"><label class="lbl" for="co-n">회사 이름</label><input class="inp" id="co-n" value="${h(x.co.name || '')}" list="co-list"><datalist id="co-list">${[...new Set(mvClients())].map((c) => `<option value="${h(c)}">`).join('')}</datalist></div>
        ${dom && !x.mail.internal ? `<label class="checkline small" style="margin-top:10px"><input type="checkbox" id="co-dom" checked>${h(dom)}에서 오는 메일은 앞으로 이 회사로 표시</label>` : ''}
+       ${pk ? `<label class="checkline small" style="margin-top:10px"><input type="checkbox" id="co-ph" checked>${h(fmtPhone(x.mail.fromAddr))} 번호의 문자·통화는 모두 이 회사로 표시</label>` : ''}
      </div>
      <div class="mfoot"><div class="spacer"></div><button type="button" class="btn" data-x>취소</button><button type="button" class="btn primary" data-ok>저장</button></div>`,
     { cls: 'narrow' }
@@ -4637,6 +4645,13 @@ async function mvSetCompany(x) {
     if (n) v.over[x.mail.id] = n;
     else delete v.over[x.mail.id];
     if (n && $('#co-dom', el)?.checked) v.domains[dom] = n;
+    if (pk && $('#co-ph', el)) {
+      // 번호 단위로 저장: 같은 번호의 다른 문자·통화도 같은 회사
+      if (n && $('#co-ph', el).checked) {
+        v.phones[pk] = n;
+        for (const y of [...(S.smsList || []), ...(S.callList || [])]) if (phoneKey(y.fromAddr) === pk) delete v.over[y.id];
+      } else if (!n) delete v.phones[pk];
+    }
     save();
     close();
     renderMailView();
