@@ -2060,7 +2060,7 @@ async function deleteTodo(t) {
 }
 
 /* ───────────── 설정 창 ───────────── */
-async function openSettings() {
+async function openSettings(startPage = null) {
   const st = settings();
   const ver = await window.api.version();
   const info = await window.api.info();
@@ -2084,7 +2084,7 @@ async function openSettings() {
     { cls: 'wide', onClose: () => renderAll() }
   );
   const body = $('#setBody', el);
-  let page = null; // null = 첫 화면(메뉴)
+  let page = typeof startPage === 'string' ? startPage : null; // null = 첫 화면(메뉴)
   const ext = (url, label) => `<button type="button" class="linkbtn" data-ext="${url}">${label}</button>`;
   const pages = () => {
     const g = S.g;
@@ -2182,7 +2182,7 @@ async function openSettings() {
           <div class="kw-list">${
             learned
               .sort((a, b) => b[1].s - a[1].s)
-              .map(([w, v]) => `<span class="kw">${h(w)} <small>${+v.s.toFixed(1)}</small><button type="button" data-kwdel="${h(w)}" aria-label="${h(w)} 지우기">×</button></span>`)
+              .map(([w, v]) => `<span class="kw">${h(w)}${v.ai ? ' <i class="mv-aitag" title="AI 요약에서 배운 단어">AI</i>' : ''} <small>${+v.s.toFixed(1)}</small><button type="button" data-kwdel="${h(w)}" aria-label="${h(w)} 지우기">×</button></span>`)
               .join('') || '<span class="small muted">아직 없음</span>'
           }</div>
           <div class="row gap8"><input class="inp" id="s-kwnew" placeholder="단어 추가" style="width:200px;height:34px"><button type="button" class="btn" data-kwadd>추가</button></div>
@@ -2206,6 +2206,20 @@ async function openSettings() {
           <label class="checkline small"><input type="checkbox" id="s-callfree" ${cs.free !== false ? 'checked' : ''}>변환 후 녹음 파일을 다시 '온라인 전용'으로 (PC 공간 확보)</label>
           <div class="kv"><span>음성 인식</span><span class="small" id="s-callst">확인 중…</span><button type="button" class="btn" data-callinst hidden>설치</button></div>
           <span class="note">녹음과 글은 PC 밖으로 나가지 않습니다. 글은 프로그램 데이터 폴더(calls)에만 저장됩니다.</span>`,
+      },
+      {
+        id: 'ai',
+        icon: '🤖',
+        title: 'AI 요약',
+        sum: aiState().on ? '켬 · Claude Haiku' : '끔',
+        html: () => `
+          <label class="checkline small"><input type="checkbox" id="s-aion" ${aiState().on ? 'checked' : ''}>메일·문자·통화를 AI(Claude)로 요약 · 새로 온 것 자동</label>
+          <label class="checkline small"><input type="checkbox" id="s-aimask" ${aiState().mask !== false ? 'checked' : ''}>개인정보 가리고 보내기 (주민·카드·전화·계좌번호, 이메일, 보낸 사람 주소)</label>
+          <div class="fld"><label class="lbl" for="s-aikey">Claude API 키</label>
+            <div class="row gap8"><input class="inp" id="s-aikey" type="password" autocomplete="off" placeholder="sk-ant-… (붙여 넣기)" style="flex:1;height:34px"><button type="button" class="btn" data-aikey>저장</button><button type="button" class="btn" data-aidel>지우기</button></div></div>
+          <div class="kv"><span>상태</span><span class="small" id="s-aist">확인 중…</span></div>
+          <span class="note">AI가 일정을 찾았는데 기본 규칙이 놓친 경우, 그 단어를 '내 일정 단어'에 배워서(0.5점) AI를 꺼도 비슷한 건을 찾습니다.</span>
+          <span class="note">켜면 요약할 내용이 Anthropic(Claude API)으로 전송됩니다. 키는 이 PC에 암호화해 저장합니다. 알림성 메일은 보내지 않습니다.</span>`,
       },
       {
         id: 'app',
@@ -2233,6 +2247,15 @@ async function openSettings() {
           .join('')}</div>`;
     renderUpdate();
     if (page === 'calls') callStatusUI();
+    if (page === 'ai') aiStatusUI();
+  };
+  const aiStatusUI = async () => {
+    const el2 = $('#s-aist', body);
+    if (!el2) return;
+    const r = await window.api.ai.status();
+    if (!el2.isConnected) return;
+    const st = r.ok ? r.data : null;
+    el2.textContent = !st ? `확인 실패: ${r.error}` : `${st.has ? '키 저장됨 ✓' : '키 없음'} · 이번 달 ${st.month.n}건 · 약 $${st.cost.toFixed(3)} (약 ${Math.round(st.cost * 1450)}원)${S.aiErr ? ` · ⚠ ${S.aiErr}` : ''}`;
   };
   const callStatusUI = async () => {
     const el2 = $('#s-callst', body);
@@ -2265,6 +2288,16 @@ async function openSettings() {
       mailState().enabled = t.checked;
       save();
       if (t.checked) scanMail();
+      return;
+    }
+    if (t.id === 's-aimask') {
+      aiState().mask = t.checked;
+      save();
+      return;
+    }
+    if (t.id === 's-aion') {
+      await aiToggle(t.checked);
+      t.checked = aiState().on;
       return;
     }
     if (t.id === 's-calldiar') {
@@ -2337,6 +2370,17 @@ async function openSettings() {
     const ext = e.target.closest('[data-ext]');
     if (ext) return window.api.openExternal(ext.dataset.ext);
     if (e.target.closest('[data-page]')) return; // 페이지 이동은 아래(el)에서
+    if (e.target.closest('[data-aikey]') || e.target.closest('[data-aidel]')) {
+      const del = !!e.target.closest('[data-aidel]');
+      const r = await window.api.ai.setKey(del ? '' : $('#s-aikey', body).value);
+      const res = r.ok ? r.data : { ok: false, error: r.error };
+      if (!res.ok) return toast(res.error);
+      $('#s-aikey', body).value = '';
+      S.aiErr = null;
+      toast(del ? 'API 키를 지웠습니다.' : 'API 키를 저장했습니다.');
+      if (del && aiState().on) aiToggle(false);
+      return aiStatusUI();
+    }
     if (e.target.closest('[data-calldir]')) {
       const r = await window.api.calls.pickDir();
       if (r.ok && r.data) {
@@ -4120,6 +4164,110 @@ async function transcribeCall(x) {
     if (mvVisible()) renderMailView();
   }
 }
+/* ───────────── AI 요약 (Claude API, 켰을 때만) ───────────── */
+function aiState() {
+  S.data.ai ||= { on: false, mask: true };
+  if (S.data.ai.mask === undefined) S.data.ai.mask = true;
+  return S.data.ai;
+}
+const aiRes = new Map(); // id → { sum } | { err }
+let aiBusy = false;
+const aiTargets = () =>
+  S.mailList || S.smsList || S.callList ? mvItems().filter((x) => x.rule.cat !== 'auto' && !(x.mail.source === 'call' && x.mail.pending) && !aiRes.has(x.mail.id)) : [];
+const aiLeft = () => aiTargets().length;
+function aiToSum(r, rule) {
+  const dues = (r.dues || [])
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d.date || ''))
+    .map((d) => ({ date: d.date, endDate: d.date, startTime: d.start || null, endTime: d.end || null, place: d.place || '', text: d.text || '', hits: [] }));
+  const requests = [].concat(r.requests || []).filter(Boolean).slice(0, 5);
+  return {
+    ...rule,
+    ai: true,
+    title: r.title || rule.title,
+    gist: r.gist || rule.gist,
+    requests,
+    dues,
+    company: r.company || null,
+    cat: rule.cat === 'auto' ? 'auto' : dues.length ? 'due' : requests.length ? 'request' : 'info',
+  };
+}
+/**
+ * AI가 일정(날짜)을 찾았는데 규칙 요약은 못 찾았으면 → 그 단어들을 배워서
+ * AI를 꺼도 비슷한 메일·문자·통화를 일정 후보로 잡게 한다. (0.5점씩, 본문에 실제 있는 단어만)
+ */
+function aiLearn(x, r) {
+  const a = aiState();
+  a.learned ||= {};
+  if (a.learned[x.mail.id] || !r?.dues?.some((d) => d.date) || x.rule.cat === 'auto') return;
+  a.learned[x.mail.id] = Date.now();
+  for (const [k, t] of Object.entries(a.learned)) if (t < Date.now() - 60 * 864e5) delete a.learned[k];
+  if (x.rule.dues.some((d) => d.date)) return save(); // 규칙도 이미 찾음 → 배울 것 없음
+  const body = `${x.mail.subject || ''} ${x.mail.body || ''}`;
+  // 인사·서술어·흔한 말은 빼고 명사 같은 단어만
+  const GEN = /^(감사|수고|부탁|가능|여부|확인|요청|회신|답변|다들|모두|오늘|내일|모레|이번|다음|지난|오전|오후|저녁|아침|관련|문의|안내|드림|일정|시간|날짜|자료|내용|말씀|연락|전화|메일|문자|통화|회계사|담당자|진행|예정|참석|가능성)$/;
+  const ws = [r.title, ...r.dues.map((d) => d.text)]
+    .flatMap((t) => extractWords(t, companyNames()))
+    .filter((w) => body.includes(w) && !GEN.test(w) && !/(니다|세요|어요|아요|해요|하고|하는|해서|드려|으신|시는|겠|다|요|죠|님|께)$/.test(w));
+  if (!ws.length) return save();
+  const kw = kwStore();
+  scoreWords(kw, ws.slice(0, 4), +0.5);
+  for (const w of ws.slice(0, 4)) if (kw.w[w]) kw.w[w].ai = 1;
+  S.aiLearnedN = (S.aiLearnedN || 0) + 1;
+  saveKw();
+}
+async function aiToggle(on) {
+  if (on) {
+    const st = await window.api.ai.status();
+    if (!st.ok || !st.data.has) {
+      toast('설정 → AI 요약에서 Claude API 키를 먼저 넣어 주세요.');
+      aiState().on = false;
+      save();
+      renderMailView();
+      return openSettings('ai');
+    }
+  }
+  aiState().on = on;
+  S.aiErr = null;
+  save();
+  for (const x of sumCache.values()) x.aiSum = null;
+  renderMailView();
+  renderMailSumBadge();
+  if (on) aiQueue();
+}
+async function aiQueue() {
+  if (aiBusy || !aiState().on) return;
+  aiBusy = true;
+  try {
+    for (;;) {
+      if (!aiState().on) break;
+      const x = aiTargets()[0];
+      if (!x) break;
+      const m = x.mail;
+      const body = [m.body || '', ...[].concat(m.attText || []).map((a) => `[첨부 ${a.name}]\n${a.text}`)].join('\n\n');
+      const r = await window.api.ai.summarize({ id: m.id, kind: m.source === 'sms' || m.source === 'call' ? m.source : 'mail', from: m.from, subject: m.source === 'mail' || !m.source ? m.subject : '', at: (m.received || '').slice(0, 16), body, mask: aiState().mask !== false });
+      const res = r.ok ? r.data : { ok: false, error: r.error };
+      if (res.ok) {
+        aiRes.set(m.id, { sum: res.sum });
+        aiLearn(x, res.sum);
+      }
+      else if (res.code === 'auth' || res.code === 'credit' || res.code === 'noKey') {
+        S.aiErr = res.error;
+        break;
+      } else if (res.code === 'rate') {
+        await new Promise((ok) => setTimeout(ok, 20000));
+        continue;
+      } else aiRes.set(m.id, { err: res.error });
+      S.aiErr = null;
+      x.aiSum = null;
+      if (mvVisible()) renderMailView();
+    }
+  } finally {
+    aiBusy = false;
+    renderMailSumBadge();
+    if (mvVisible()) renderMailView();
+  }
+}
+setInterval(() => S.data && aiState().on && !S.aiErr && aiQueue(), 15000);
 function mvClients() {
   return [...companyNames(), ...Object.values(mvState().domains)];
 }
@@ -4157,8 +4305,12 @@ function mvItems() {
           x.sum.title = (m.subject || '').replace(/^\[[^\]]{1,12}\]\s*/, '') || '(문자)';
           if (m.web && !m.contact && x.sum.cat === 'info') x.sum.cat = 'auto';
         }
+        x.rule = x.sum;
         sumCache.set(m.id, x);
       }
+      // AI 요약이 켜져 있고 결과가 있으면 그것으로
+      const ar = aiState().on ? aiRes.get(m.id)?.sum : null;
+      x.sum = ar ? (x.aiSum ||= aiToSum(ar, x.rule)) : x.rule;
       const ov = v.over[m.id];
       x.co = ov
         ? { name: ov, by: 'user' }
@@ -4167,6 +4319,8 @@ function mvItems() {
           : m.company
             ? { name: m.company, by: 'contact' }
             : companyOf(x.mailForCo, clients, v.domains);
+      // AI가 찾은 회사: 규칙으로 못 찾았을 때만
+      if (!ov && x.sum.ai && x.sum.company && x.sum.cat !== 'auto' && (!x.co.name || x.co.by === 'domain-raw')) x.co = { name: x.sum.company, by: 'ai' };
       x.done = !!v.done[m.id];
       if (m.source === 'call' && m.pending) {
         const c = callState();
@@ -4255,6 +4409,7 @@ function renderMailView() {
         .join('')}
       <input class="inp mv-q" id="mv-q" placeholder="🔍 보낸 사람·제목 검색" value="${h(MV.q)}">
       <label class="checkline small"><input type="checkbox" id="mv-done" ${MV.showDone ? 'checked' : ''}>완료한 메일도 보기</label>
+      <label class="mv-aisw ${aiState().on ? 'on' : ''}" title="Claude API로 요약 (설정 → AI 요약에서 키 입력)"><input type="checkbox" id="mv-ai" ${aiState().on ? 'checked' : ''}><span class="sw"></span>AI 요약</label>${aiState().on ? `<span class="small ${S.aiErr ? 'err' : 'muted'}">${h(S.aiErr || (aiBusy ? `AI 요약 중… ${aiLeft()}개 남음` : ''))}</span>` : ''}
       <div class="spacer"></div>${S.smsErr && MV.src !== 'mail' ? `<span class="small muted" title="${h(S.smsErr)}">문자 없음</span>` : ''}${callsBusy ? `<span class="small muted">통화 글로 바꾸는 중… ${callLeft() > 1 ? `(남은 ${callLeft()}개)` : ''}</span>` : ''}<span class="small muted">${h(status)}</span>
       <button type="button" class="btn" data-mvrefresh ${S.mailLoading ? 'disabled' : ''}>↻ 새로고침</button>
     </div>`;
@@ -4287,7 +4442,7 @@ function renderMailView() {
   let det = '<div class="mv-empty">메일이 없습니다.</div>';
   if (x) {
     const mb = mailBodies.get(x.mail.id);
-    const hits = x.sum.dues.flatMap((d) => d.hits || []);
+    const hits = (x.rule || x.sum).dues.flatMap((d) => d.hits || []);
     const readAtts = new Set([].concat(x.mail.attText || []).map((a) => a.name));
     det = `<div class="mv-dh"><div style="flex:1;min-width:0"><h2>${h(x.sum.title)}</h2>
         <div class="mv-m">${x.co.name ? `<span class="mv-co-t">${h(x.co.name)}</span> ` : ''}${h(x.mail.from || '')}${x.mail.source === 'call' ? (x.mail.fromAddr && x.mail.from !== fmtPhone(x.mail.fromAddr) ? ` (${h(fmtPhone(x.mail.fromAddr))})` : '') : x.mail.fromAddr && !/^\/o=/i.test(x.mail.fromAddr) && x.mail.fromAddr !== x.mail.from ? ` &lt;${h(x.mail.fromAddr)}&gt;` : ''} · ${h(fmtDay((x.mail.received || '').slice(0, 10)).replace(/^(오늘|어제) · /, ''))} ${h((x.mail.received || '').slice(11, 16))} · <button type="button" class="linkbtn" data-mvco>${x.co.name ? '회사 바꾸기' : '회사 지정'}</button></div></div>
@@ -4301,7 +4456,7 @@ function renderMailView() {
         <button type="button" class="btn ${x.done ? '' : 'primary'}" data-mvdone>${x.done ? '완료 취소' : '✓ 완료'}</button></div>
       <div class="mv-scroll">
       <div class="mv-sum">
-        <div><h4>${x.mail.source === 'sms' ? '최근 문자 요지' : x.mail.source === 'call' ? '통화 요지' : '요지'}</h4><div class="mv-gist">${h(x.sum.gist || '(본문 없음)')}</div></div>
+        <div><h4>${x.mail.source === 'sms' ? '최근 문자 요지' : x.mail.source === 'call' ? '통화 요지' : '요지'}${x.sum.ai ? ' <span class="mv-aitag">AI</span>' : aiState().on && aiRes.get(x.mail.id)?.err ? ` <span class="mv-aierr" title="${h(aiRes.get(x.mail.id).err)}">AI 실패</span>` : ''}</h4><div class="mv-gist">${h(x.sum.gist || '(본문 없음)')}</div></div>
         ${x.sum.requests.length ? `<div><h4>요청 사항</h4><ul>${x.sum.requests.map((r) => `<li>${h(r)}</li>`).join('')}</ul></div>` : ''}
         ${
           x.sum.dues.length
@@ -4628,6 +4783,8 @@ function bindMailView() {
     } else if (e.target.id === 'mv-co') {
       MV.co = e.target.value;
       renderMailView();
+    } else if (e.target.id === 'mv-ai') {
+      aiToggle(e.target.checked);
     } else if (e.target.id === 'mv-done') {
       MV.showDone = e.target.checked;
       renderMailView();

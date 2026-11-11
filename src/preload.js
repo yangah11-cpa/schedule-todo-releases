@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('api', {
     pickDir: call('calls:pickDir'),
     onProgress: (cb) => ipcRenderer.on('calls:progress', (_e, p) => cb(p)),
   },
+  ai: { status: call('ai:status'), setKey: call('ai:setKey'), summarize: call('ai:summarize') },
   clip: { onPick: (cb) => ipcRenderer.on('clip:pick', (_e, d) => cb(d)) },
   outlook: { read: call('outlook:read'), selected: call('outlook:selected'), open: call('outlook:open'), onPick: (cb) => ipcRenderer.on('outlook:pick', () => cb()) },
   patch: {

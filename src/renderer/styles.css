@@ -486,3 +486,15 @@ input[type="time"]::-webkit-calendar-picker-indicator { display: none; }
 .mv-para { display: flex; gap: 12px; align-items: baseline; }
 .mv-para p { margin: 0; font-size: 13.5px; line-height: 1.75; color: var(--ink); flex: 1; }
 .mv-pt { flex: 0 0 38px; font-size: 11.5px; color: var(--src, var(--faint)); font-variant-numeric: tabular-nums; text-align: right; }
+
+/* AI 요약 */
+.mv-aisw { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--muted); cursor: pointer; user-select: none; }
+.mv-aisw input { display: none; }
+.mv-aisw .sw { width: 30px; height: 17px; border-radius: 9px; background: #D6D3CC; position: relative; transition: background .15s; }
+.mv-aisw .sw::after { content: ''; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: #fff; transition: left .15s; }
+.mv-aisw.on { color: #6A3FD0; }
+.mv-aisw.on .sw { background: #7C4DDB; }
+.mv-aisw.on .sw::after { left: 15px; }
+.mv-aitag { display: inline-block; font-size: 10.5px; font-weight: 700; color: #fff; background: #7C4DDB; border-radius: 4px; padding: 0 5px; margin-left: 4px; vertical-align: 1px; }
+.mv-aierr { font-size: 10.5px; color: #B3261E; margin-left: 4px; }
+.small.err { color: #B3261E; }

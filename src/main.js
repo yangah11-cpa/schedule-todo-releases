@@ -289,6 +289,12 @@ app.whenReady().then(() => {
   ipcMain.handle('calls:audio', wrap((file) => calls.readAudio(file)));
   ipcMain.handle('calls:transcribe', wrap((opt) => calls.transcribe(opt || {})));
   ipcMain.handle('calls:setMe', wrap((opt) => calls.setMe(opt || {})));
+  // AI 요약 (켰을 때만)
+  const ai = require('./ai');
+  ai.init(app.getPath('userData'));
+  ipcMain.handle('ai:status', wrap(() => ai.status()));
+  ipcMain.handle('ai:setKey', wrap((k) => ai.setKey(k)));
+  ipcMain.handle('ai:summarize', wrap((o) => ai.summarize(o || {})));
   ipcMain.handle('calls:openFile', wrap((file) => shell.openPath(file)));
   ipcMain.handle(
     'calls:pickDir',
