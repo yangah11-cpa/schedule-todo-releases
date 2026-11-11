@@ -33,6 +33,22 @@ function copyDb(src, name, tmp) {
   return path.join(tmp, name);
 }
 
+// 장문 문자 제목이 UTF-8 바이트를 Latin-1/CP1252로 잘못 읽은 상태(예: "ê³µì§€")로 저장된 경우 되돌리기
+const CP1252 = { 0x20ac: 0x80, 0x201a: 0x82, 0x0192: 0x83, 0x201e: 0x84, 0x2026: 0x85, 0x2020: 0x86, 0x2021: 0x87, 0x02c6: 0x88, 0x2030: 0x89, 0x0160: 0x8a, 0x2039: 0x8b, 0x0152: 0x8c, 0x017d: 0x8e, 0x2018: 0x91, 0x2019: 0x92, 0x201c: 0x93, 0x201d: 0x94, 0x2022: 0x95, 0x2013: 0x96, 0x2014: 0x97, 0x02dc: 0x98, 0x2122: 0x99, 0x0161: 0x9a, 0x203a: 0x9b, 0x0153: 0x9c, 0x017e: 0x9e, 0x0178: 0x9f };
+function fixMojibake(str) {
+  const t = String(str || '');
+  if (!/[\u00c0-\u00ff][\u0080-\u00bf\u0152-\u2122]/.test(t)) return t; // 깨진 흔적이 없으면 그대로
+  const bytes = [];
+  for (const ch of t) {
+    const c = ch.codePointAt(0);
+    if (c < 0x100) bytes.push(c);
+    else if (CP1252[c] !== undefined) bytes.push(CP1252[c]);
+    else return t; // 바이트로 되돌릴 수 없는 글자가 섞여 있으면 원래대로
+  }
+  const out = Buffer.from(bytes).toString('utf8');
+  return /[\uac00-\ud7a3]/.test(out) && !out.includes('\ufffd') ? out : t;
+}
+
 const digits = (s) => String(s || '').replace(/\D/g, '').replace(/^82/, '0');
 const key = (s) => digits(s).slice(-8);
 
@@ -91,7 +107,7 @@ function readMessages({ days = 3 } = {}) {
       ['mms', mms],
     ]) {
       for (const r of rows) {
-        const body = String(r.body || '').replace(/^\s*\[Web발신\]\s*/i, '').trim();
+        const body = fixMojibake(r.body).replace(/^\s*\[Web발신\]\s*/i, '').trim();
         if (!body) continue;
         const who = people.get(key(r.addr)) || null;
         out.push({
@@ -102,7 +118,7 @@ function readMessages({ days = 3 } = {}) {
           fromAddr: r.addr || '',
           contact: !!who,
           company: who?.company || '',
-          subject: String(r.subject || '').trim(),
+          subject: fixMojibake(r.subject).trim(),
           received: iso(r.ms),
           body: body.slice(0, 6000),
         });
@@ -117,4 +133,4 @@ function readMessages({ days = 3 } = {}) {
   }
 }
 
-module.exports = { readMessages };
+module.exports = { readMessages, fixMojibake };
