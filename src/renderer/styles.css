@@ -501,3 +501,13 @@ input[type="time"]::-webkit-calendar-picker-indicator { display: none; }
 /* 숫자 자리수가 바뀌어도 칩·탭 위치가 움직이지 않게 */
 .mv-chip em, .mv-stabs button em { display: inline-block; min-width: 3ch; text-align: left; font-variant-numeric: tabular-nums; }
 .mv-aisw + span { display: inline-block; min-width: 150px; }
+
+/* 위쪽 AI 사용량 */
+.ai-meter { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 10px; border: 1px solid var(--line2); border-radius: 8px; background: #fff; color: #7C4DDB; font: inherit; font-size: 12.5px; cursor: pointer; }
+.ai-meter:hover { background: #F4F0FD; }
+.ai-meter .bar { width: 38px; height: 6px; border-radius: 3px; background: #E6DDFA; overflow: hidden; }
+.ai-meter .bar i { display: block; height: 100%; background: #7C4DDB; border-radius: 3px; }
+.ai-meter b { font-weight: 700; font-variant-numeric: tabular-nums; min-width: 3.2ch; text-align: right; }
+.ai-meter.mid { color: #B7791F; } .ai-meter.mid .bar i { background: #D69E2E; } .ai-meter.mid .bar { background: #FBEBC5; }
+.ai-meter.low { color: #B3261E; } .ai-meter.low .bar i { background: #D9534F; } .ai-meter.low .bar { background: #FBD9D7; }
+.ai-meter.off { color: var(--faint); } .ai-meter.off .bar i { background: #B9B6AF; } .ai-meter.off .bar { background: var(--soft); }

@@ -2217,6 +2217,7 @@ async function openSettings(startPage = null) {
           <label class="checkline small"><input type="checkbox" id="s-aimask" ${aiState().mask !== false ? 'checked' : ''}>개인정보 가리고 보내기 (주민·카드·전화·계좌번호, 이메일, 보낸 사람 주소)</label>
           <div class="fld"><label class="lbl" for="s-aikey">Claude API 키</label>
             <div class="row gap8"><input class="inp" id="s-aikey" type="password" autocomplete="off" placeholder="sk-ant-… (붙여 넣기)" style="flex:1;height:34px"><button type="button" class="btn" data-aikey>저장</button><button type="button" class="btn" data-aidel>지우기</button></div></div>
+          <div class="row gap8"><label class="small" for="s-aibudget">월 예산 ($)</label><input class="inp" id="s-aibudget" type="number" min="1" step="1" value="${aiState().budget}" style="width:90px;height:34px"><span class="small muted">충전한 크레딧에 맞추면 위쪽에 남은 비율이 보입니다. 다 쓰면 자동으로 멈춥니다.</span></div>
           <div class="kv"><span>상태</span><span class="small" id="s-aist">확인 중…</span></div>
           <span class="note">AI가 일정을 찾았는데 기본 규칙이 놓친 경우, 그 단어를 '내 일정 단어'에 배워서(0.5점) AI를 꺼도 비슷한 건을 찾습니다.</span>
           <span class="note">켜면 요약할 내용이 Anthropic(Claude API)으로 전송됩니다. 키는 이 PC에 암호화해 저장합니다. 알림성 메일은 보내지 않습니다.</span>`,
@@ -2288,6 +2289,18 @@ async function openSettings(startPage = null) {
       mailState().enabled = t.checked;
       save();
       if (t.checked) scanMail();
+      return;
+    }
+    if (t.id === 's-aibudget') {
+      const n = +t.value;
+      if (n > 0) {
+        aiState().budget = n;
+        save();
+        if (S.aiErr && /예산/.test(S.aiErr)) S.aiErr = null;
+        renderAiMeter();
+        aiStatusUI();
+        aiQueue();
+      }
       return;
     }
     if (t.id === 's-aimask') {
@@ -2371,6 +2384,7 @@ async function openSettings(startPage = null) {
     if (ext) return window.api.openExternal(ext.dataset.ext);
     if (e.target.closest('[data-page]')) return; // 페이지 이동은 아래(el)에서
     if (e.target.closest('[data-aikey]') || e.target.closest('[data-aidel]')) {
+      setTimeout(() => renderAiMeter(), 300);
       const del = !!e.target.closest('[data-aidel]');
       const r = await window.api.ai.setKey(del ? '' : $('#s-aikey', body).value);
       const res = r.ok ? r.data : { ok: false, error: r.error };
@@ -3421,6 +3435,8 @@ async function init() {
   window.api.outlook.onPick?.(() => pickOutlookMail());
   window.api.clip?.onPick?.((d) => openClipChooser(d));
   bindMailView();
+  document.getElementById('aiMeter')?.addEventListener('click', () => openSettings('ai'));
+  setTimeout(() => renderAiMeter(), 1500);
   window.api.calls?.onProgress?.((p) => {
     S.callInstall = `${p.step} ${p.total ? `${Math.round((p.got / p.total) * 100)}%` : `${Math.round(p.got / 1e6)}MB`}`;
     const el2 = document.getElementById('s-callst');
@@ -4168,7 +4184,8 @@ async function transcribeCall(x) {
 }
 /* ───────────── AI 요약 (Claude API, 켰을 때만) ───────────── */
 function aiState() {
-  S.data.ai ||= { on: false, mask: true };
+  S.data.ai ||= { on: false, mask: true, budget: 5 };
+  if (!(S.data.ai.budget > 0)) S.data.ai.budget = 5;
   if (S.data.ai.mask === undefined) S.data.ai.mask = true;
   if (S.data.ai.on && !S.data.ai.since) S.data.ai.since = nowLocal(); // 켠 시각 이후에 받은 것만
   return S.data.ai;
@@ -4237,6 +4254,7 @@ async function aiToggle(on) {
   aiState().on = on;
   if (on) aiState().since = nowLocal(); // 켠 뒤로 받은 것만 AI로
   S.aiErr = null;
+  renderAiMeter();
   save();
   for (const x of sumCache.values()) x.aiSum = null;
   renderMailView();
@@ -4245,6 +4263,10 @@ async function aiToggle(on) {
 }
 async function aiQueue() {
   if (aiBusy || !aiState().on) return;
+  if (aiSt && aiSt.cost >= aiState().budget) {
+    S.aiErr = `이번 달 예산($${aiState().budget})을 다 썼습니다. 설정에서 예산을 늘리면 다시 요약합니다.`;
+    return;
+  }
   aiBusy = true;
   try {
     for (;;) {
@@ -4258,6 +4280,13 @@ async function aiQueue() {
       if (res.ok) {
         aiRes.set(m.id, { sum: res.sum });
         aiLearn(x, res.sum);
+        if (!res.cached) {
+          await renderAiMeter();
+          if (aiSt && aiSt.cost >= aiState().budget) {
+            S.aiErr = `이번 달 예산($${aiState().budget})을 다 썼습니다. 설정에서 예산을 늘리면 다시 요약합니다.`;
+            break;
+          }
+        }
       }
       else if (res.code === 'auth' || res.code === 'credit' || res.code === 'noKey') {
         S.aiErr = res.error;
@@ -4277,6 +4306,25 @@ async function aiQueue() {
   }
 }
 setInterval(() => S.data && aiState().on && !S.aiErr && aiQueue(), 15000);
+/** 위쪽 막대: AI 사용량 (월 예산 대비 남은 비율) */
+let aiSt = null;
+async function renderAiMeter(refresh = true) {
+  const b = document.getElementById('aiMeter');
+  if (!b || !S.data) return;
+  if (refresh) {
+    const r = await window.api.ai.status();
+    aiSt = r.ok ? r.data : aiSt;
+  }
+  if (!aiSt || (!aiSt.has && !aiState().on)) return (b.hidden = true);
+  const budget = aiState().budget;
+  const left = Math.max(0, 1 - aiSt.cost / budget);
+  const pct = Math.round(left * 100);
+  b.hidden = false;
+  b.className = `ai-meter ${aiState().on ? '' : 'off'} ${pct <= 10 ? 'low' : pct <= 30 ? 'mid' : ''}`;
+  b.title = `AI 요약 ${aiState().on ? '켜짐' : '꺼짐'} · 이번 달 ${aiSt.month.n}건, 약 $${aiSt.cost.toFixed(2)} / 예산 $${budget} (남은 ${pct}%)\n누르면 AI 요약 설정`;
+  b.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 2l1.8 5.2L19 9l-5.2 1.8L12 16l-1.8-5.2L5 9l5.2-1.8z" fill="currentColor"/><path d="M19 14l.9 2.1L22 17l-2.1.9L19 20l-.9-2.1L16 17l2.1-.9z" fill="currentColor"/></svg><span class="bar"><i style="width:${pct}%"></i></span><b>${pct}%</b>`;
+}
+setInterval(() => renderAiMeter(), 5 * 60 * 1000);
 const phoneKey = (n) => String(n || '').replace(/\D/g, '').replace(/^82/, '0').slice(-8);
 function mvClients() {
   return [...companyNames(), ...Object.values(mvState().domains)];
