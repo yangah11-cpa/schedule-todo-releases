@@ -128,7 +128,7 @@ const PUSH_LIST_TITLE = '일정&할일 알림 연결 (지우지 마세요)';
 const LUNAR_YEARS = 10;
 
 const S = {
-  tab: { '#todo': 'todo', '#mail': 'mail' }[location.hash] || 'cal',
+  tab: { '#todo': 'todo', '#mail': 'mail', '#team': 'team' }[location.hash] || 'cal',
   mailSum: store.get('st.mailsum', null),
   mailDone: store.get('st.maildone', {}),
   cursor: D.today(),
@@ -581,8 +581,25 @@ function renderCal() {
       .join('')}`;
   }
   html += '</div></div>';
-  html += renderTeamWeek(days);
+  const sp = D.parts(S.sel || today);
+  html += `<form class="quick" id="quickEvForm"><label for="quickEv" class="sr">새 일정</label>
+      <input id="quickEv" enterkeyhint="done" autocomplete="off" placeholder="${sp.m}/${sp.d} 일정 입력 (예: 3시 세운철강 미팅)"></form>`;
   v.innerHTML = html;
+}
+
+/* ───────────── 화면: 팀 일정 (주 단위) ───────────── */
+function renderTeam() {
+  const { from, to } = monthRange();
+  const days = Array.from({ length: 7 }, (_, i) => D.addDays(from, i));
+  const a = D.parts(from);
+  const b = D.parts(to);
+  const thu = D.parts(D.addDays(from, 3));
+  $('#viewTeam').innerHTML = `<div class="cal-nav">
+      <button type="button" class="nav-btn" data-nav="-1" aria-label="이전 주">‹</button>
+      <div class="ym">${thu.m}월 ${Math.ceil(thu.d / 7)}주<small>${a.m}/${a.d} ~ ${b.m}/${b.d}</small></div>
+      <button type="button" class="nav-btn text" data-nav="0">이번 주</button>
+      <button type="button" class="nav-btn" data-nav="1" aria-label="다음 주">›</button>
+    </div>${renderTeamWeek(days)}`;
 }
 
 /* 하단 팀 일정 (월~금, 같은 일정은 한 막대, 인차지 짙은 색, 본인 제외) */
@@ -794,15 +811,17 @@ function render() {
   $('#viewCal').hidden = S.tab !== 'cal';
   $('#viewTodo').hidden = S.tab !== 'todo';
   $('#viewMail').hidden = S.tab !== 'mail';
+  $('#viewTeam').hidden = S.tab !== 'team';
   renderMailBadge();
   $$('.tabbar button').forEach((b) => {
     const on = b.dataset.tab === S.tab;
     b.classList.toggle('on', on);
     b.setAttribute('aria-selected', on);
   });
-  $('#topTitle').textContent = { cal: '일정', todo: '할 일', mail: '메일·문자·통화' }[S.tab];
+  $('#topTitle').textContent = { cal: '일정', todo: '할 일', mail: '메일·문자·통화', team: '팀 일정' }[S.tab];
   if (S.tab === 'cal') renderCal();
   else if (S.tab === 'todo') renderTodo();
+  else if (S.tab === 'team') renderTeam();
   else renderMail();
 }
 
@@ -1562,11 +1581,11 @@ function bind() {
   let tx = null;
   let ty = null;
   let tt = 0;
-  $('.views').addEventListener('touchstart', (e) => {
+  document.addEventListener('touchstart', (e) => {
     tx = null;
-    if (e.touches.length !== 1 || e.target.closest('#weekWrap, .cal-nav, .chips, .team-wrap, input, textarea, select')) return;
+    if (e.touches.length !== 1 || e.target.closest('.tabbar, header.top, #sheetRoot, #gate, #weekWrap, .cal-nav, .chips, input, textarea, select')) return;
     let n = e.target;
-    while (n && n !== e.currentTarget) {
+    while (n && n !== document.body) {
       if (n.scrollWidth > n.clientWidth + 4 && /auto|scroll/.test(getComputedStyle(n).overflowX)) return;
       n = n.parentElement;
     }
@@ -1574,16 +1593,70 @@ function bind() {
     ty = e.touches[0].clientY;
     tt = Date.now();
   }, { passive: true });
-  $('.views').addEventListener('touchend', (e) => {
+  document.addEventListener('touchend', (e) => {
     if (tx === null || $('#sheetRoot').childElementCount) return;
     const dx = e.changedTouches[0].clientX - tx;
     const dy = e.changedTouches[0].clientY - ty;
     tx = null;
     if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.8 || Date.now() - tt > 800) return;
-    const order = ['cal', 'todo', 'mail'];
-    const i = order.indexOf(S.tab) + (dx < 0 ? 1 : -1);
-    if (i >= 0 && i < order.length) goTab(order[i], dx < 0 ? 'left' : 'right');
+    // 일정 → 할 일 → 메일·문자·통화 → 팀 일정 → (다시) 일정
+    const order = ['cal', 'todo', 'mail', 'team'];
+    const i = (order.indexOf(S.tab) + (dx < 0 ? 1 : -1) + order.length) % order.length;
+    goTab(order[i], dx < 0 ? 'left' : 'right');
   }, { passive: true });
+  $('#viewTeam').addEventListener('click', (e) => {
+    const nav = e.target.closest('[data-nav]');
+    if (nav) return move(+nav.dataset.nav);
+    if (e.target.closest('[data-reauth]'))
+      return signIn('consent')
+        .then(() => loadTeam())
+        .then(render)
+        .catch((er) => toast(er.message));
+  });
+  // 일정 빠른 입력: 글에서 날짜·시간·장소를 찾고, 날짜가 없으면 선택한 날
+  $('#viewCal').addEventListener('submit', async (e) => {
+    if (e.target.id !== 'quickEvForm') return;
+    e.preventDefault();
+    const inp = $('#quickEv');
+    const t = inp.value.trim();
+    if (!t) return;
+    const r = parseShared(t, D.today(), nowStamp());
+    const date = r.found ? r.date : S.sel || D.today();
+    const writable = S.calendars.filter((c) => c.writable);
+    const defCal = store.get('st.defCal');
+    const calendarId = writable.some((c) => c.id === defCal) ? defCal : writable.find((c) => c.primary)?.id || writable[0]?.id;
+    if (!calendarId) return toast('쓸 수 있는 캘린더가 없습니다.');
+    const f = {
+      title: r.title || t,
+      date,
+      endDate: r.found ? r.endDate || date : date,
+      allDay: !r.startTime,
+      startTime: r.startTime || '09:00',
+      endTime: r.endTime || autoEnd(r.startTime || '09:00'),
+      place: r.place || '',
+      people: [],
+      memo: '',
+      repeat: 'none',
+      calType: 'solar',
+      alarm: '',
+      calendarId,
+    };
+    inp.value = '';
+    inp.disabled = true;
+    try {
+      await createEvent(f);
+      learnWords(f.title);
+      toast(`${D.parts(date).m}/${D.parts(date).d}${f.allDay ? '' : ` ${f.startTime}`} 「${f.title}」 추가했습니다.`);
+      await loadEvents();
+      render();
+    } catch (er) {
+      inp.value = t;
+      toast(`추가 실패: ${er.message}`);
+    } finally {
+      const i2 = $('#quickEv');
+      if (i2) i2.disabled = false;
+    }
+  });
   // 메일·문자 카드
   $('#viewMail').addEventListener('click', (e) => {
     const b = e.target.closest('[data-mdone],[data-mev],[data-mtodo]');
