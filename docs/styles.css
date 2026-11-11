@@ -183,7 +183,7 @@ textarea.inp { height: auto; min-height: 84px; padding: 10px 12px; resize: verti
 .gate img { width: 88px; height: 88px; }
 .gate h1 { margin: 0; font-size: 22px; }
 .gate p { margin: 0; color: var(--ink2); font-size: 14px; line-height: 1.6; max-width: 360px; }
-.gate .btn { min-width: 240px; }
+.gate .btn { min-width: 240px; flex: 0 0 auto; height: 48px; }
 .gate .inp { max-width: 360px; }
 
 .toast { position: fixed; left: 50%; bottom: calc(var(--tabbar-h) + 86px); transform: translateX(-50%) translateY(10px); background: var(--ink); color: #fff; padding: 11px 16px; border-radius: 12px; font-size: 14px; opacity: 0; pointer-events: none; transition: .2s; z-index: 40; max-width: 88vw; text-align: center; }
@@ -383,3 +383,8 @@ mark.hl-place { background: #CDEFD6; }
 .tw tr.me th { color: var(--accent); }
 .tw tr.me th small { display: block; font-size: 10px; font-weight: 700; color: #fff; background: var(--accent); border-radius: 4px; width: fit-content; padding: 0 4px; margin-top: 2px; }
 .tw tr.me td { background: #F3F7FE; }
+
+/* 로그인 만료 안내 (위쪽 얇은 줄) */
+.auth-bar { position: fixed; top: calc(56px + env(safe-area-inset-top, 0px)); left: 0; right: 0; z-index: 7; border: 0; background: #FFF4D6; color: #7A5A00; font: inherit; font-size: 12.5px; font-weight: 600; padding: 7px 12px; text-align: center; box-shadow: 0 1px 0 #F0DFA8; }
+.auth-bar.fail { background: #FDE7E4; color: #B3261E; box-shadow: 0 1px 0 #F5C6C1; }
+.auth-bar[hidden] { display: none; }

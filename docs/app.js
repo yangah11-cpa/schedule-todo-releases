@@ -134,7 +134,7 @@ const S = {
   cursor: D.today(),
   sel: D.today(),
   calendars: store.get('st.calendars', []),
-  events: [],
+  events: store.get('st.events', []), // 마지막으로 받은 일정 (로그인 만료 중에도 보이게)
   range: null,
   tasks: store.get('st.tasks', []),
   todoFilter: 'all',
@@ -196,10 +196,66 @@ function signOut() {
   showGate();
 }
 
+/* 로그인 만료: 전체 화면으로 막지 않고 저장된 내용을 보여 주며, 화면을 처음 누를 때 조용히 다시 확인 */
+function needAuth() {
+  if (!store.get('st.signedOnce') || !clientId()) return showGate();
+  if (S.needAuth) return;
+  S.needAuth = true;
+  renderAuthBar();
+  const once = () => {
+    document.removeEventListener('pointerup', once, true);
+    reauth();
+  };
+  document.addEventListener('pointerup', once, true);
+}
+async function reauth() {
+  if (S.reauthing) return;
+  S.reauthing = true;
+  try {
+    await signIn('');
+    S.needAuth = false;
+    renderAuthBar();
+    S.lastRefresh = Date.now();
+    await refreshAll();
+  } catch {
+    renderAuthBar(true);
+  } finally {
+    S.reauthing = false;
+  }
+}
+function renderAuthBar(failed) {
+  let b = $('#authBar');
+  if (!b) {
+    b = document.createElement('button');
+    b.id = 'authBar';
+    b.type = 'button';
+    b.className = 'auth-bar';
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      reauth();
+    });
+    document.body.appendChild(b);
+  }
+  b.hidden = !S.needAuth;
+  b.classList.toggle('fail', !!failed);
+  b.textContent = failed ? 'Google 연결이 끊겼습니다 · 눌러서 다시 연결' : '저장된 내용 보는 중 · 화면을 누르면 최신으로';
+}
+
 async function api(base, path, { method = 'GET', body } = {}) {
   if (!tokenOk()) {
-    showGate('expired');
-    throw Object.assign(new Error('로그인이 필요합니다.'), { code: 'auth' });
+    // 버튼을 누른 직후라면 바로 조용히 다시 확인 (이미 허용한 계정이면 창이 잠깐 떴다 닫힘)
+    if (store.get('st.signedOnce') && navigator.userActivation?.isActive)
+      try {
+        await signIn('');
+        S.needAuth = false;
+        renderAuthBar();
+      } catch {
+        /* 아래에서 처리 */
+      }
+    if (!tokenOk()) {
+      needAuth();
+      throw Object.assign(new Error('Google 연결을 다시 확인해야 합니다.'), { code: 'auth' });
+    }
   }
   const r = await fetch(base + path, {
     method,
@@ -209,7 +265,7 @@ async function api(base, path, { method = 'GET', body } = {}) {
   if (r.status === 401) {
     token = null;
     store.set('st.token', null);
-    showGate('expired');
+    needAuth();
     throw Object.assign(new Error('로그인이 만료되었습니다.'), { code: 'auth' });
   }
   if (r.status === 204) return null;
@@ -325,6 +381,11 @@ async function loadEvents() {
     })
   );
   S.events = res.flat();
+  try {
+    store.set('st.events', S.events);
+  } catch {
+    /* 저장 공간 부족 */
+  }
   S.range = { from: a, to: b };
   learn();
 }
@@ -392,7 +453,7 @@ async function loadTeam() {
 }
 
 async function refreshAll() {
-  if (!tokenOk()) return showGate(store.get('st.signedOnce') ? 'expired' : undefined);
+  if (!tokenOk()) return needAuth();
   S.loading = true;
   $('#btnRefresh').classList.add('spin');
   try {
@@ -2282,4 +2343,4 @@ render();
 if (tokenOk()) {
   S.lastRefresh = Date.now();
   refreshAll().then(maybeOpenShare, maybeOpenShare);
-} else showGate(store.get('st.signedOnce') ? 'expired' : undefined);
+} else needAuth(); // 처음이면 시작 화면, 전에 로그인했으면 저장된 내용 + 위쪽 안내
