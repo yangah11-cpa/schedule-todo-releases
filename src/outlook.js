@@ -34,15 +34,12 @@ try {
     $ns = $ol.GetNamespace('MAPI')
     $inbox = $ns.GetDefaultFolder(6)
     $items = $inbox.Items
-    $items.Sort('[ReceivedTime]', $true)
   }
   $list = New-Object System.Collections.ArrayList
-  foreach ($m in $items) {
-    if ($list.Count -ge ${max}) { break }
-    if (-not $sel) { try { if ($m.ReceivedTime -lt $since) { break } } catch {} }
+  function Read-One($m) {
     try {
       $cls = [int]$m.Class
-      if ($cls -ne 43 -and $cls -ne 53) { continue }
+      if ($cls -ne 43 -and $cls -ne 53) { return }
       $body = [string]$m.Body
       if ($body.Length -gt 6000) { $body = $body.Substring(0, 6000) }
       $o = [ordered]@{
@@ -51,7 +48,7 @@ try {
         from = [string]$m.SenderName
         fromAddr = $(try { if ([string]$m.SenderEmailType -eq 'EX') { [string]$m.Sender.GetExchangeUser().PrimarySmtpAddress } else { [string]$m.SenderEmailAddress } } catch { '' })
         internal = $(try { [string]$m.SenderEmailType -eq 'EX' } catch { $false })
-        atts = @($(try { foreach ($a in $m.Attachments) { [string]$a.FileName } } catch {}) | Where-Object { $_ -and $_ -notmatch '^image\d+\.(png|jpe?g|gif)$' })
+        atts = @($(try { foreach ($a in $m.Attachments) { [string]$a.FileName } } catch {}) | Where-Object { $_ -and $_ -notmatch '^image\\d+\\.(png|jpe?g|gif)$' })
         received = $(try { $m.ReceivedTime.ToString('yyyy-MM-ddTHH:mm:ss') } catch { (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss') })
         unread = [bool]$m.UnRead
         body = $body
@@ -63,7 +60,7 @@ try {
         foreach ($a in $m.Attachments) {
           try {
             $fn = [string]$a.FileName
-            if ($fn -match '\.(pdf|docx|hwpx|hwp|txt)$' -and $a.Size -lt 15MB -and $k -lt 5) {
+            if ($fn -match '\\.(pdf|docx|hwpx|hwp|txt)$' -and $a.Size -lt 15MB -and $k -lt 5) {
               $k++
               $d = Join-Path $attDir ('{0}_{1}' -f $list.Count, $k)
               New-Item -ItemType Directory -Force -Path $d | Out-Null
@@ -88,6 +85,24 @@ try {
       }
       [void]$list.Add($o)
     } catch {}
+  }
+  if ($sel) {
+    foreach ($m in $items) { Read-One $m }
+  } else {
+    # 기간 안의 메일만 골라서(Restrict) 최신순으로 GetFirst/GetNext — foreach는 정렬을 무시할 수 있음
+    $r = $null
+    try { $r = $items.Restrict("@SQL=""urn:schemas:httpmail:datereceived"" >= '" + $since.ToUniversalTime().ToString('yyyy-MM-dd HH:mm') + "'") } catch {}
+    if ($r) { $items = $r }
+    try { $items.Sort('[ReceivedTime]', $true) } catch {}
+    $m = $items.GetFirst()
+    $n = 0
+    while ($m -ne $null -and $list.Count -lt ${max} -and $n -lt 3000) {
+      $n++
+      $old = $false
+      try { if ($m.ReceivedTime -lt $since) { $old = $true } } catch {}
+      if (-not $old) { Read-One $m }
+      $m = $items.GetNext()
+    }
   }
   if ($sel -and $list.Count -eq 0) { Done @{ ok = $false; code = 'notMail' }; exit }
   Done @{ ok = $true; mails = @($list) }
