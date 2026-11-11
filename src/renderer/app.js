@@ -3155,7 +3155,8 @@ function bind() {
     };
   });
   $('#btnTeamImport').onclick = () => importTeam();
-  $('#btnMail').onclick = () => openMailDialog();
+  const bm = $('#btnMail');
+  if (bm) bm.onclick = () => openMailDialog();
   $('#btnAddEvent').onclick = () => openEventDialog({ date: S.view === 'month' && S.cursor.slice(0, 7) !== D.today().slice(0, 7) ? S.cursor : S.view === 'month' ? D.today() : S.cursor });
   $('#btnSync').onclick = () => {
     S.gRange = null;
