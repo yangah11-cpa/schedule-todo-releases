@@ -2202,6 +2202,7 @@ async function openSettings() {
             <select class="inp" id="s-callmodel" style="width:auto;height:34px"><option value="small" ${cs.model === 'small' ? 'selected' : ''}>빠름 · small (약 260MB)</option><option value="turbo" ${cs.model === 'turbo' ? 'selected' : ''}>정확 · large-v3-turbo (약 570MB, 느림)</option></select></div>
           <div class="row gap8"><label class="small" for="s-callauto">자동 변환</label>
             <select class="inp" id="s-callauto" style="width:auto;height:34px">${[1, 3, 7].map((d) => `<option value="${d}" ${cs.auto === d ? 'selected' : ''}>${d === 1 ? '오늘' : `최근 ${d}일`} 녹음</option>`).join('')}</select></div>
+          <label class="checkline small"><input type="checkbox" id="s-calldiar" ${cs.diar ? 'checked' : ''}>목소리 구분해서 말풍선으로 보기 (실험 · 정확도 낮음, 끄면 문단으로)</label>
           <label class="checkline small"><input type="checkbox" id="s-callfree" ${cs.free !== false ? 'checked' : ''}>변환 후 녹음 파일을 다시 '온라인 전용'으로 (PC 공간 확보)</label>
           <div class="kv"><span>음성 인식</span><span class="small" id="s-callst">확인 중…</span><button type="button" class="btn" data-callinst hidden>설치</button></div>
           <span class="note">녹음과 글은 PC 밖으로 나가지 않습니다. 글은 프로그램 데이터 폴더(calls)에만 저장됩니다.</span>`,
@@ -2246,14 +2247,15 @@ async function openSettings() {
     S.callReady = !!st?.ready;
     const btn = $('[data-callinst]', body);
     el2.className = `small ${st?.ready ? 'ok' : 'muted'}`;
+    const wantDiar = !!callState().diar;
     el2.textContent = !st
       ? `확인 실패: ${r.error}`
-      : st.ready && st.diar
-        ? '준비됨 ✓ (목소리 구분 포함)'
+      : st.ready && (st.diar || !wantDiar)
+        ? `준비됨 ✓${wantDiar ? ' (목소리 구분 포함)' : ''}`
         : st.ready
           ? '글 변환 준비됨 · 목소리 구분(약 70MB) 설치 필요'
-          : `설치 필요 · ${st.cli ? '' : '프로그램 + '}모델 ${st.models[callState().model]?.size || ''}MB + 목소리 구분 약 70MB`;
-    btn.hidden = !!(st?.ready && st?.diar);
+          : `설치 필요 · ${st.cli ? '' : '프로그램 + '}모델 ${st.models[callState().model]?.size || ''}MB${wantDiar ? ' + 목소리 구분 약 70MB' : ''}`;
+    btn.hidden = !!(st?.ready && (st?.diar || !wantDiar));
   };
   draw();
 
@@ -2263,6 +2265,13 @@ async function openSettings() {
       mailState().enabled = t.checked;
       save();
       if (t.checked) scanMail();
+      return;
+    }
+    if (t.id === 's-calldiar') {
+      callState().diar = t.checked;
+      save();
+      callStatusUI();
+      sumCache.clear();
       return;
     }
     if (t.id === 's-callon' || t.id === 's-callfree') {
@@ -2344,7 +2353,7 @@ async function openSettings() {
       ib.disabled = true;
       S.callInstall = '내려받는 중…';
       callStatusUI();
-      const r = await window.api.calls.install({ model: callState().model });
+      const r = await window.api.calls.install({ model: callState().model, diar: !!callState().diar });
       S.callInstall = null;
       if (!r.ok) toast(`설치하지 못했습니다: ${r.error}`);
       else {
@@ -4072,7 +4081,7 @@ async function transcribeCall(x) {
     const a = await window.api.calls.audio(x.file);
     if (!a.ok) throw new Error(a.error);
     const { wav, seconds } = await toWav16k(a.data);
-    const r = await window.api.calls.transcribe({ name: x.name, file: x.file, wav, seconds, model: c.model, free: c.free !== false });
+    const r = await window.api.calls.transcribe({ name: x.name, file: x.file, wav, seconds, model: c.model, free: c.free !== false, diar: !!c.diar });
     const res = r.ok ? r.data : { ok: false, error: r.error };
     if (!res.ok) throw new Error(res.error || res.code);
     x.body = res.text;
@@ -4132,8 +4141,12 @@ function mvItems() {
         x = { mail: m, sum: m.source === 'call' ? summarize(m, m.received.slice(0, 10), m.received.slice(0, 16)) : summarize(m, today, now), mailForCo: mail };
         if (m.source === 'call') {
           // 통화: 인사·맞장구("여보세요", "네 안녕하세요")를 건너뛴 첫 내용 문장을 요지로
-          const chat = /여보세요|안녕하(세요|십니까)|수고(하세요|하셨|많으)|감사합니다|들어가세요|끊을게요|^(네|예|아|응|어|음|그래요|알겠습니다)[\s,.!?~]*$/;
-          const real = (x.sum.sentences || []).filter((t) => !chat.test(t) && t.replace(/^(네|예|아|어|음)[\s,]+/, '').length >= 6);
+          const strip = (t) =>
+            t
+              .replace(/(여보세요|안녕하(세요|십니까)|수고(하세요|하셨습니다|많으십니다)|감사합니다|고맙습니다|들어가세요|[가-힣]{1,4}님)[\s,.!?~]*/g, '')
+              .replace(/^((네|예|아|어|음|응|그래요|알겠습니다)[\s,.!?~]+)+/, '')
+              .trim();
+          const real = (x.sum.sentences || []).map(strip).filter((t) => t.length >= 8);
           x.sum.gist = (real[0] || x.sum.gist || '').slice(0, 120);
           x.sum.title = m.pending ? '통화 녹음' : (x.sum.gist || '통화 녹음').slice(0, 40);
           if (x.sum.cat === 'auto') x.sum.cat = 'info';
@@ -4301,9 +4314,9 @@ function renderMailView() {
         }
         ${x.sum.atts.length ? `<div><h4>첨부</h4><div class="mv-att">${x.sum.atts.map((n) => `<span>📎 ${h(n)}${readAtts.has(n) ? ' · 읽음' : ''}</span>`).join('')}</div></div>` : ''}
       </div>
-      ${x.mail.source === 'call' && x.mail.lines?.length ? callBubbles(x.mail) : ''}
+      ${x.mail.source === 'call' && !x.mail.pending ? (callState().diar && x.mail.lines?.some((l) => l.spk != null) ? callBubbles(x.mail) : callParas(x.mail, hits)) : ''}
       ${x.mail.source === 'sms' ? `<div class="mv-thread" id="mv-thread" data-tid="${h(x.mail.id)}"><div class="mv-th-h">대화 기록 · ${h(x.mail.from || '')}</div><div class="muted small" style="padding:10px">불러오는 중…</div></div>` : ''}
-      <details class="mv-orig" ${x.mail.source === 'sms' || x.mail.lines?.length ? '' : 'open'}><summary>${x.mail.source === 'call' ? (x.mail.lines?.length ? '글 전체 (찾은 날짜 표시)' : '통화 내용 (자동 변환, 틀린 부분이 있을 수 있음)') : '원문'}</summary><div>${highlightHtml((mb?.body || stripQuoted(x.mail.body || '')).slice(0, 6000), hits, h)}</div>${[].concat(x.mail.attText || [])
+      <details class="mv-orig" ${x.mail.source === 'call' ? 'hidden' : ''} ${x.mail.source === 'sms' ? '' : 'open'}><summary>원문</summary><div>${highlightHtml((mb?.body || stripQuoted(x.mail.body || '')).slice(0, 6000), hits, h)}</div>${[].concat(x.mail.attText || [])
         .map((a) => `<div class="mv-attt">📎 ${h(a.name)}</div><div>${highlightHtml(a.text.slice(0, 3000), hits, h)}</div>`)
         .join('')}</details>
       </div>
@@ -4353,6 +4366,57 @@ const SRC_ICON = {
   call: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.6 3.5l2.6.4 1.4 4.1-1.9 1.6a12 12 0 0 0 5.7 5.7l1.6-1.9 4.1 1.4.4 2.6c-.2 1.5-1.6 2.6-3.1 2.5C10 19.4 4.6 14 4.1 6.6 4 5.1 5.1 3.7 6.6 3.5z" fill="currentColor"/></svg>',
 };
 const srcIcon = (k) => `<i class="mv-ico" data-src="${k}">${SRC_ICON[k] || ''}</i>`;
+/** 통화 글: 쉬는 구간마다 문단으로 (앞에 녹음 시각) */
+function callParas(m, hits) {
+  const mmss = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+  let ps = [];
+  if (m.lines?.length) {
+    // 짧은 맞장구("네.")는 앞 문단에 붙임
+    for (const l of m.lines) {
+      const prev = ps[ps.length - 1];
+      if (prev && (l.text.length < 25 || prev.text.length < 25) && (prev.text + l.text).length < 240) prev.text += ` ${l.text}`;
+      else ps.push({ t: l.t || 0, text: l.text });
+    }
+  } else {
+    // 예전 방식(시간 없음): 200자 정도씩 묶기
+    let cur = '';
+    for (const l of String(m.body || '').split(/\n+/)) {
+      cur = cur ? `${cur} ${l}` : l;
+      if (cur.length > 200) {
+        ps.push({ t: null, text: cur });
+        cur = '';
+      }
+    }
+    if (cur) ps.push({ t: null, text: cur });
+  }
+  // 짧은 문단(30자 미만)은 앞 문단과 합치고, 긴 문단(220자 넘음)은 문장 단위로 끊기
+  const merged = [];
+  for (const p of ps) {
+    const prev = merged[merged.length - 1];
+    if (prev && (prev.text.length < 30 || p.text.length < 30) && prev.text.length + p.text.length < 160) prev.text += ` ${p.text}`;
+    else merged.push({ ...p });
+  }
+  ps = [];
+  for (const p of merged) {
+    if (p.text.length <= 220) {
+      ps.push(p);
+      continue;
+    }
+    const sents = p.text.split(/(?<=[.!?。]|다|요|죠|까)\s+/);
+    let cur = '';
+    let first = true;
+    for (const t of sents) {
+      if (cur && (cur + t).length > 180) {
+        ps.push({ t: first ? p.t : null, text: cur });
+        first = false;
+        cur = t;
+      } else cur = cur ? `${cur} ${t}` : t;
+    }
+    if (cur) ps.push({ t: first ? p.t : null, text: cur });
+  }
+  const body = ps.map((p) => `<div class="mv-para"><span class="mv-pt">${p.t != null ? mmss(p.t) : ''}</span><p>${highlightHtml(p.text, hits, h)}</p></div>`).join('');
+  return `<div class="mv-thread mv-call"><div class="mv-th-h">통화 내용 · ${h(m.from)} <span class="muted" style="font-weight:400">· 자동 변환, 틀린 부분이 있을 수 있음</span></div><div class="mv-paras">${body || '<div class="muted small">내용 없음</div>'}</div></div>`;
+}
 /** 통화 말풍선: 나(오른쪽 파랑) / 상대(왼쪽 회색) */
 function callBubbles(m) {
   const spks = [...new Set(m.lines.map((l) => l.spk).filter((v) => v != null))];

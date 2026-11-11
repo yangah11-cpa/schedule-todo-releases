@@ -231,7 +231,7 @@ async function download(url, dest, onProgress) {
 
 let installing = null;
 /** whisper-cli + 모델 내려받기 (한 번만) */
-function install({ model = 'small' } = {}, onProgress) {
+function install({ model = 'small', diar = false } = {}, onProgress) {
   if (installing) return installing;
   installing = (async () => {
     const st = status({ model });
@@ -265,7 +265,7 @@ function install({ model = 'small' } = {}, onProgress) {
     const m = MODELS[model] || MODELS.small;
     const mf = path.join(whisperDir(), 'models', m.file);
     if (!fs.existsSync(mf)) await download(MODEL_URL(m.file), mf, (g, t) => onProgress?.({ step: `음성 모델 ${m.label}`, got: g, total: t || m.size * 1e6 }));
-    if (!diarReady()) await installDiar(onProgress);
+    if (diar && !diarReady()) await installDiar(onProgress);
     return status({ model });
   })().finally(() => (installing = null));
   return installing;
@@ -346,7 +346,7 @@ function mergeSpeakers(segs, diar) {
     }
     spk = spk == null ? null : +spk;
     const prev = lines[lines.length - 1];
-    if (prev && prev.spk === spk && a - prev.end < 1.2 && prev.text.length < 160) {
+    if (prev && prev.spk === spk && a - prev.end < (spk == null ? 1.0 : 1.2) && prev.text.length < (spk == null ? 220 : 160)) {
       prev.text = `${prev.text} ${s.text}`;
       prev.end = b;
     } else lines.push({ t: Math.round(a * 10) / 10, end: b, spk, text: s.text });
@@ -374,7 +374,7 @@ function cleanText(t) {
  * 글로 바꾸기: wav(16kHz mono, 렌더러에서 디코딩) → whisper-cli → calls/<이름>.txt
  * @param {{name:string, file:string, wav:Uint8Array, model?:string, threads?:number, free?:boolean}} o
  */
-async function transcribe({ name, file, wav, model = 'small', seconds = 60, free = true }) {
+async function transcribe({ name, file, wav, model = 'small', seconds = 60, free = true, diar: useDiar = false }) {
   const st = status({ model });
   if (!st.ready) return { ok: false, code: 'notReady' };
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'st-call-'));
@@ -412,14 +412,14 @@ async function transcribe({ name, file, wav, model = 'small', seconds = 60, free
     // 목소리 구분 (설치돼 있을 때만, 실패해도 글은 저장)
     let diar = null;
     let diarErr = null;
-    if (diarReady())
+    if (useDiar && diarReady())
       try {
         diar = await diarize(w, tmp);
       } catch (e) {
         diarErr = e.message;
       }
     const lines = mergeSpeakers(segs, diar);
-    const text = lines.map((l) => l.text).join('\n');
+    const text = lines.map((l) => l.text).join('\n\n');
     fs.mkdirSync(textDir(), { recursive: true });
     fs.writeFileSync(textPath(name), text, 'utf8');
     const rec = { v: 2, lines, emb: diar?.emb || null, me: null, meBy: null, diarErr };
