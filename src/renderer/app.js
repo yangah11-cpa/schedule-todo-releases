@@ -3242,6 +3242,10 @@ async function init() {
   bind();
   renderAll();
   S.appVersion = await window.api.version();
+  window.api.info?.().then((inf) => {
+    if (inf?.patchError) toast(`변경사항을 적용하지 못해 이전 버전으로 실행했습니다: ${inf.patchError}`);
+    else if (inf?.relaunched) toast(`변경사항을 적용했습니다 (버전 ${S.appVersion}).`);
+  });
   S.update = await window.api.update.state();
   renderUpdate();
   window.api.update.onState((u) => {

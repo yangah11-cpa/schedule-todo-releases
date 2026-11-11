@@ -7,9 +7,16 @@ const { PushHub } = require('./pushhub');
 app.setAppUserModelId('com.yangah.scheduletodo');
 app.commandLine.appendSwitch('lang', 'ko-KR');
 
-if (!app.requestSingleInstanceLock()) {
-  app.quit();
+// 한 번에 하나만 실행. "변경사항 적용"으로 다시 시작할 때는 이전 창이 완전히 닫힐 때까지 잠깐 기다림
+let gotLock = app.requestSingleInstanceLock();
+if (!gotLock && process.argv.includes('--relaunch')) {
+  const sleep = new Int32Array(new SharedArrayBuffer(4));
+  for (let i = 0; i < 30 && !gotLock; i++) {
+    Atomics.wait(sleep, 0, 0, 200);
+    gotLock = app.requestSingleInstanceLock();
+  }
 }
+if (!gotLock) app.quit();
 
 const dataDir = app.getPath('userData');
 const dataFile = path.join(dataDir, 'data.json');
@@ -301,15 +308,34 @@ app.whenReady().then(() => {
 
 /* ───────────── 즉시 적용 패치 감시 ───────────── */
 function appInfo() {
-  return global.__appInfo || { source: 'bundled', version: app.getVersion(), bundledVersion: app.getVersion(), patchDir: null };
+  const i = global.__appInfo || { source: 'bundled', version: app.getVersion(), bundledVersion: app.getVersion(), patchDir: null };
+  return { ...i, relaunched: process.argv.includes('--relaunch') };
+}
+try {
+  const pe = global.__appInfo?.patchError;
+  if (pe) fs.appendFileSync(path.join(app.getPath('userData'), 'patch-error.log'), `${new Date().toISOString()} ${pe}\n`);
+} catch {
+  /* 무시 */
 }
 let patchReady = null;
 function watchPatch() {
   const info = appInfo();
   ipcMain.handle('patch:state', () => patchReady);
   ipcMain.handle('patch:apply', () => {
-    // 다시 시작할 때는 창이 보이도록 --hidden 제외
-    app.relaunch({ args: process.argv.slice(1).filter((a) => a !== '--hidden') });
+    // 다시 시작할 때는 창이 보이도록 --hidden 제외, 새 프로세스가 잠금을 기다리도록 --relaunch 표시
+    const args = process.argv.slice(1).filter((a) => a !== '--hidden' && a !== '--relaunch');
+    app.relaunch({ args: [...args, '--relaunch'] });
+    quitting = true;
+    try {
+      app.releaseSingleInstanceLock();
+    } catch {
+      /* 무시 */
+    }
+    try {
+      tray?.destroy();
+    } catch {
+      /* 무시 */
+    }
     app.exit(0);
   });
   if (!info.patchDir) return;
