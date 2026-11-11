@@ -4399,7 +4399,77 @@ function mvItems() {
       return first === i;
     });
 }
-function renderMailSumBadge() {
+/* ───────────── 휴대폰으로 요약 보내기 (구글 드라이브 앱 전용 숨김 공간) ───────────── */
+let phTimer = null;
+let phLast = '';
+function schedulePhonePush() {
+  clearTimeout(phTimer);
+  phTimer = setTimeout(pushSummariesToPhone, 8000);
+}
+/** 휴대폰에서 '완료'한 것 가져오기 */
+async function pullPhoneDone() {
+  const r = await window.api.drive.load('mail-done.json');
+  if (!r.ok || !r.data) return false;
+  let d = {};
+  try {
+    d = JSON.parse(r.data) || {};
+  } catch {
+    return false;
+  }
+  const v = mvState();
+  const seen = v.phoneSeen || 0;
+  let n = 0;
+  let max = seen;
+  for (const [id, t] of Object.entries(d)) {
+    if (t <= seen) continue;
+    max = Math.max(max, t);
+    if (!v.done[id]) {
+      v.done[id] = t;
+      n++;
+    }
+  }
+  v.phoneSeen = max;
+  if (n || max !== seen) save();
+  return n > 0;
+}
+async function pushSummariesToPhone() {
+  if (!S.g?.connected || !S.g?.drive || !(S.mailList || S.smsList || S.callList)) return;
+  try {
+    if (await pullPhoneDone()) {
+      renderMailSumBadge(true);
+      if (mvVisible()) renderMailView();
+    }
+    const items = mvItems()
+      .filter((x) => !x.done && x.sum.cat !== 'auto' && !(x.mail.source === 'call' && x.mail.pending))
+      .slice(0, 150)
+      .map((x) => ({
+        id: x.mail.id,
+        src: x.mail.source === 'sms' || x.mail.source === 'call' ? x.mail.source : 'mail',
+        from: x.mail.from || '',
+        co: x.co?.name || '',
+        at: (x.mail.received || '').slice(0, 16),
+        title: x.sum.title || '',
+        gist: x.sum.gist || '',
+        cat: x.sum.cat,
+        req: (x.sum.requests || []).slice(0, 4),
+        dues: (x.sum.dues || [])
+          .filter((d) => d.date)
+          .slice(0, 4)
+          .map((d) => ({ date: d.date, endDate: d.endDate || d.date, allDay: !!d.allDay || !d.startTime, start: d.startTime || null, end: d.endTime || null, place: d.place || '', text: (d.text || '').slice(0, 80) })),
+        ai: !!x.sum.ai,
+        more: x.more || 0,
+      }));
+    const body = JSON.stringify(items);
+    if (body === phLast) return;
+    const r = await window.api.drive.save('mail-summary.json', JSON.stringify({ v: 1, asOf: nowLocal(), items }));
+    if (r.ok) phLast = body;
+  } catch {
+    /* 오프라인 등: 다음에 다시 */
+  }
+}
+setInterval(() => S.data && pushSummariesToPhone(), 10 * 60 * 1000);
+function renderMailSumBadge(noPush) {
+  if (!noPush) schedulePhonePush();
   const b = $('#mailSumBadge');
   if (!b) return;
   const n = S.mailList || S.smsList ? mvItems().filter((x) => !x.done && (x.sum.cat === 'request' || x.sum.cat === 'due')).length : 0;
@@ -4793,6 +4863,7 @@ function bindMailView() {
       else v.done[x.mail.id] = Date.now();
       // 오래된 완료 기록 정리
       for (const [k, t] of Object.entries(v.done)) if (t < Date.now() - 60 * 864e5) delete v.done[k];
+      schedulePhonePush();
       save();
       renderMailSumBadge();
       return renderMailView();

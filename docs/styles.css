@@ -99,7 +99,9 @@ button { cursor: pointer; }
 .empty { text-align: center; color: var(--muted); font-size: 14px; padding: 28px 16px; }
 
 /* 할 일 */
-.quick { display: flex; gap: 8px; padding: 12px 12px 4px; position: sticky; top: 56px; z-index: 4; background: var(--ground); }
+.quick { display: flex; gap: 8px; padding: 8px 12px; position: fixed; left: 0; right: 0; bottom: var(--tabbar-h); z-index: 5; background: var(--ground); border-top: 1px solid var(--line); }
+#viewTodo { padding-bottom: 70px; min-height: calc(100vh - 56px - var(--tabbar-h)); }
+#viewTodo .chips { margin-top: 10px; }
 .quick input { flex: 1; min-width: 0; height: 46px; border: 1px solid var(--line2); border-radius: 12px; padding: 0 14px; background: #fff; font-size: 15px; }
 .chips { display: flex; gap: 6px; padding: 6px 12px 2px; overflow-x: auto; }
 .chips button { flex: none; height: 34px; padding: 0 14px; border: 0; border-radius: 999px; background: #E9E7E1; font-size: 13px; }
@@ -337,3 +339,38 @@ mark.hl-place { background: #CDEFD6; }
 .kw.b { padding: 4px 10px; background: #EEECE7; color: #3D3A35; }
 .kw.b.off { text-decoration: line-through; opacity: 0.5; }
 .kw-base summary { cursor: pointer; margin-top: 4px; }
+
+/* 아래 메뉴 배지 */
+.tabbar button { position: relative; }
+.tab-badge { position: absolute; top: 6px; left: calc(50% + 6px); min-width: 17px; height: 17px; line-height: 17px; padding: 0 4px; border-radius: 9px; background: #D9534F; color: #fff; font-size: 10.5px; font-weight: 700; text-align: center; }
+/* 밀어서 넘길 때 */
+.view.slide-left { animation: slideL .22s ease-out; }
+.view.slide-right { animation: slideR .22s ease-out; }
+@keyframes slideL { from { transform: translateX(28px); opacity: .4; } to { transform: none; opacity: 1; } }
+@keyframes slideR { from { transform: translateX(-28px); opacity: .4; } to { transform: none; opacity: 1; } }
+/* 메일·문자·통화 요약 */
+[data-src="mail"] { --src: #2F6FDB; --src-bg: #EEF4FD; --src-line: #CFE0FA; }
+[data-src="sms"] { --src: #23935A; --src-bg: #EDF8F1; --src-line: #C9EAD6; }
+[data-src="call"] { --src: #7C4DDB; --src-bg: #F4F0FD; --src-line: #DDD2F7; }
+#viewMail { padding-bottom: 16px; }
+.ms-head { padding: 12px 16px 0; color: var(--muted); font-size: 12px; }
+.ms-card { margin: 0 12px 8px; background: #fff; border: 1px solid var(--line); border-left: 4px solid var(--src); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.ms-r1 { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); min-width: 0; }
+.ms-r1 b { color: var(--ink); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ms-ico { display: inline-flex; width: 19px; height: 19px; color: var(--src); flex: 0 0 auto; }
+.ms-ico svg { width: 100%; height: 100%; }
+.ms-co { font-size: 11.5px; background: var(--src-bg); color: var(--src); border-radius: 5px; padding: 1px 6px; white-space: nowrap; }
+.ms-more { font-size: 11px; color: var(--faint); }
+.ms-t { margin-left: auto; font-size: 12px; color: var(--faint); flex: 0 0 auto; }
+.ms-title { font-size: 15px; font-weight: 600; line-height: 1.4; }
+.ms-cat { display: inline-block; font-size: 11px; font-weight: 700; border-radius: 5px; padding: 1px 6px; margin-right: 6px; vertical-align: 1px; }
+.ms-cat.c-request { background: #FDE7E4; color: #B3261E; } .ms-cat.c-due { background: #FFF0C2; color: #7A5A00; } .ms-cat.c-info { background: #E7EEF9; color: #2459C9; }
+.ms-ai { display: inline-block; font-size: 10px; font-weight: 700; color: #fff; background: #7C4DDB; border-radius: 4px; padding: 0 4px; margin-left: 5px; vertical-align: 2px; }
+.ms-gist { font-size: 13.5px; color: var(--ink2); line-height: 1.5; }
+.ms-req { margin: 0; padding-left: 18px; font-size: 13px; color: var(--ink2); line-height: 1.6; }
+.ms-due { display: flex; align-items: center; gap: 6px; background: var(--src-bg); border-radius: 9px; padding: 6px 8px; flex-wrap: wrap; }
+.ms-due .dt { font-weight: 700; font-size: 13px; color: #7A5A00; background: #FFF0C2; border-radius: 6px; padding: 2px 7px; }
+.ms-due .tx { flex: 1 1 120px; font-size: 12.5px; color: var(--ink2); min-width: 0; }
+.ms-foot { display: flex; justify-content: flex-end; }
+.btn.sm { height: 30px; padding: 0 10px; font-size: 12.5px; border-radius: 8px; }
+.ms-due .btn.primary, .ms-foot .btn { flex: 0 0 auto; }

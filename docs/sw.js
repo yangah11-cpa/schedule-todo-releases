@@ -1,5 +1,5 @@
 // 서비스 워커: 오프라인 실행(앱 파일 캐시), 자동 업데이트, 푸시 알림
-const CACHE = 'st-pwa-v16';
+const CACHE = 'st-pwa-v17';
 const SHELL = [
   './',
   './index.html',

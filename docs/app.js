@@ -128,7 +128,9 @@ const PUSH_LIST_TITLE = '일정&할일 알림 연결 (지우지 마세요)';
 const LUNAR_YEARS = 10;
 
 const S = {
-  tab: location.hash === '#todo' ? 'todo' : 'cal',
+  tab: { '#todo': 'todo', '#mail': 'mail' }[location.hash] || 'cal',
+  mailSum: store.get('st.mailsum', null),
+  mailDone: store.get('st.maildone', {}),
   cursor: D.today(),
   sel: D.today(),
   calendars: store.get('st.calendars', []),
@@ -395,7 +397,7 @@ async function refreshAll() {
   $('#btnRefresh').classList.add('spin');
   try {
     await loadCalendars();
-    await Promise.all([loadEvents(), loadTasks(), loadTeam(), syncKw()]);
+    await Promise.all([loadEvents(), loadTasks(), loadTeam(), syncKw(), loadMailSum()]);
     scanGmail(); // 기다리지 않음 (끝나면 후보 표시)
   } catch (e) {
     if (e.code !== 'auth') toast(`불러오기 실패: ${e.message}`);
@@ -708,17 +710,100 @@ function renderTodo() {
   v.innerHTML = html;
 }
 
+/* ───────────── 메일·문자·통화 요약 (PC가 드라이브 앱 전용 공간에 올린 것) ───────────── */
+async function loadMailSum() {
+  try {
+    const d = await driveRead('mail-summary.json');
+    if (d?.items) {
+      S.mailSum = { asOf: d.asOf, items: d.items };
+      store.set('st.mailsum', S.mailSum);
+    }
+  } catch {
+    /* 오프라인·권한 없음 */
+  }
+}
+const mailOpen = () => (S.mailSum?.items || []).filter((x) => !S.mailDone[x.id]);
+function renderMailBadge() {
+  const b = $('#mailBadge');
+  if (!b) return;
+  const n = mailOpen().filter((x) => x.cat === 'request' || x.cat === 'due').length;
+  b.hidden = !n;
+  b.textContent = n > 99 ? '99+' : n;
+}
+async function markMailDone(id) {
+  S.mailDone[id] = Date.now();
+  for (const [k, t] of Object.entries(S.mailDone)) if (t < Date.now() - 60 * 864e5) delete S.mailDone[k];
+  store.set('st.maildone', S.mailDone);
+  render();
+  try {
+    // PC가 읽어 가서 PC에서도 완료 처리
+    const remote = (await driveRead('mail-done.json')) || {};
+    await driveWrite('mail-done.json', { ...remote, ...S.mailDone });
+  } catch {
+    /* 다음에 다시 */
+  }
+}
+const SRC_ICO = {
+  mail: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 7l8 6 8-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>',
+  sms: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 4v-4A2.5 2.5 0 0 1 4 13.5z" fill="currentColor"/></svg>',
+  call: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.6 3.5l2.6.4 1.4 4.1-1.9 1.6a12 12 0 0 0 5.7 5.7l1.6-1.9 4.1 1.4.4 2.6c-.2 1.5-1.6 2.6-3.1 2.5C10 19.4 4.6 14 4.1 6.6 4 5.1 5.1 3.7 6.6 3.5z" fill="currentColor"/></svg>',
+};
+const CAT_L = { request: '요청', due: '기한', info: '참고' };
+function renderMail() {
+  const v = $('#viewMail');
+  const items = mailOpen();
+  if (!S.mailSum) {
+    v.innerHTML = '<div class="empty">PC 프로그램의 메일·문자 요약이 아직 없습니다.<br>PC에서 구글 연동(드라이브 권한)이 켜져 있으면 자동으로 보내집니다.</div>';
+    return;
+  }
+  const day = (d) => {
+    const t = D.today();
+    if (d === t) return '오늘';
+    if (d === D.addDays(t, -1)) return '어제';
+    const [, m, dd] = d.split('-');
+    return `${+m}월 ${+dd}일`;
+  };
+  let html = `<div class="ms-head small">완료하지 않은 것 ${items.length}건 · PC 기준 ${h((S.mailSum.asOf || '').slice(5, 16).replace('-', '/').replace('T', ' '))}</div>`;
+  let last = '';
+  for (const x of items) {
+    const d = x.at.slice(0, 10);
+    if (d !== last) {
+      html += `<div class="grp">${day(d)}</div>`;
+      last = d;
+    }
+    const dues = (x.dues || [])
+      .map(
+        (u, i) => `<div class="ms-due"><span class="dt">${h(`${+u.date.slice(5, 7)}/${+u.date.slice(8)}`)}${u.start ? ` ${h(u.start)}` : ''}</span><span class="tx">${h(u.text || u.place || '')}</span>
+          <button type="button" class="btn sm" data-mtodo="${h(x.id)}" data-i="${i}">할 일로</button><button type="button" class="btn sm primary" data-mev="${h(x.id)}" data-i="${i}">일정으로</button></div>`
+      )
+      .join('');
+    html += `<article class="ms-card" data-src="${x.src}">
+      <div class="ms-r1"><i class="ms-ico">${SRC_ICO[x.src] || ''}</i><b>${h(x.from)}</b>${x.more ? `<span class="ms-more">+${x.more}</span>` : ''}${x.co ? `<span class="ms-co">${h(x.co)}</span>` : ''}<span class="ms-t">${h(x.at.slice(11, 16))}</span></div>
+      <div class="ms-title"><span class="ms-cat c-${x.cat}">${CAT_L[x.cat] || '참고'}</span>${h(x.title)}${x.ai ? '<span class="ms-ai">AI</span>' : ''}</div>
+      ${x.gist && x.gist !== x.title ? `<div class="ms-gist">${h(x.gist)}</div>` : ''}
+      ${x.req?.length ? `<ul class="ms-req">${x.req.map((r) => `<li>${h(r)}</li>`).join('')}</ul>` : ''}
+      ${dues}
+      <div class="ms-foot"><button type="button" class="btn sm" data-mdone="${h(x.id)}">✓ 완료</button></div>
+    </article>`;
+  }
+  if (!items.length) html += '<div class="empty">완료하지 않은 메일·문자·통화가 없습니다.</div>';
+  v.innerHTML = html;
+}
+
 function render() {
   $('#viewCal').hidden = S.tab !== 'cal';
   $('#viewTodo').hidden = S.tab !== 'todo';
+  $('#viewMail').hidden = S.tab !== 'mail';
+  renderMailBadge();
   $$('.tabbar button').forEach((b) => {
     const on = b.dataset.tab === S.tab;
     b.classList.toggle('on', on);
     b.setAttribute('aria-selected', on);
   });
-  $('#topTitle').textContent = S.tab === 'cal' ? '일정' : '할 일';
+  $('#topTitle').textContent = { cal: '일정', todo: '할 일', mail: '메일·문자·통화' }[S.tab];
   if (S.tab === 'cal') renderCal();
-  else renderTodo();
+  else if (S.tab === 'todo') renderTodo();
+  else renderMail();
 }
 
 /* ───────────── 시트(아래에서 올라오는 창) ───────────── */
@@ -1451,17 +1536,71 @@ async function openSettings() {
   });
 }
 
+/** 아래 메뉴 이동 (밀어서 넘길 때 살짝 움직이는 효과) */
+function goTab(t, dir) {
+  if (!t || t === S.tab) return;
+  S.tab = t;
+  history.replaceState(history.state, '', t === 'cal' ? '#' : `#${t}`);
+  render();
+  window.scrollTo(0, 0);
+  if (dir) {
+    const v = $(`#view${t[0].toUpperCase()}${t.slice(1)}`);
+    v.classList.remove('slide-left', 'slide-right');
+    void v.offsetWidth;
+    v.classList.add(`slide-${dir}`);
+  }
+}
+
 /* ───────────── 이벤트 연결 ───────────── */
 function bind() {
   $('.tabbar').addEventListener('click', (e) => {
     const b = e.target.closest('[data-tab]');
     if (!b) return;
-    S.tab = b.dataset.tab;
-    history.replaceState(history.state, '', S.tab === 'todo' ? '#todo' : '#');
-    render();
-    window.scrollTo(0, 0);
+    goTab(b.dataset.tab);
   });
-  $('#tabAdd').addEventListener('click', () => (S.tab === 'cal' ? openEvent(null, S.sel || D.today()) : openTask()));
+  // 좌우로 밀면 아래 메뉴 순서대로 이동 (달력의 주간 칸·가로로 스크롤되는 곳은 제외)
+  let tx = null;
+  let ty = null;
+  let tt = 0;
+  $('.views').addEventListener('touchstart', (e) => {
+    tx = null;
+    if (e.touches.length !== 1 || e.target.closest('#weekWrap, .cal-nav, .chips, .team-wrap, input, textarea, select')) return;
+    let n = e.target;
+    while (n && n !== e.currentTarget) {
+      if (n.scrollWidth > n.clientWidth + 4 && /auto|scroll/.test(getComputedStyle(n).overflowX)) return;
+      n = n.parentElement;
+    }
+    tx = e.touches[0].clientX;
+    ty = e.touches[0].clientY;
+    tt = Date.now();
+  }, { passive: true });
+  $('.views').addEventListener('touchend', (e) => {
+    if (tx === null || $('#sheetRoot').childElementCount) return;
+    const dx = e.changedTouches[0].clientX - tx;
+    const dy = e.changedTouches[0].clientY - ty;
+    tx = null;
+    if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.8 || Date.now() - tt > 800) return;
+    const order = ['cal', 'todo', 'mail'];
+    const i = order.indexOf(S.tab) + (dx < 0 ? 1 : -1);
+    if (i >= 0 && i < order.length) goTab(order[i], dx < 0 ? 'left' : 'right');
+  }, { passive: true });
+  // 메일·문자 카드
+  $('#viewMail').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-mdone],[data-mev],[data-mtodo]');
+    if (!b) return;
+    const id = b.dataset.mdone || b.dataset.mev || b.dataset.mtodo;
+    const x = (S.mailSum?.items || []).find((y) => y.id === id);
+    if (!x) return;
+    if (b.dataset.mdone) {
+      markMailDone(id);
+      return toast('완료했습니다. PC에도 반영됩니다.');
+    }
+    const u = x.dues?.[+b.dataset.i];
+    if (!u) return;
+    const memo = `${{ mail: '메일', sms: '문자', call: '통화' }[x.src]}: ${x.title}\n${x.src === 'call' ? '통화 상대' : '보낸 사람'}: ${x.from}${x.co ? ` (${x.co})` : ''}\n${x.gist || ''}`.slice(0, 1500);
+    if (b.dataset.mev) openEvent(null, u.date, { title: x.title, date: u.date, endDate: u.endDate || u.date, allDay: !!u.allDay, startTime: u.start, endTime: u.end || (u.start ? autoEnd(u.start) : null), place: u.place || '', memo });
+    else openTask(null, { title: x.title, hasDue: true, due: u.date, notes: memo });
+  });
   $('#btnRefresh').addEventListener('click', refreshAll);
   $('#btnSettings').addEventListener('click', openSettings);
 
@@ -1524,6 +1663,8 @@ function bind() {
     }
   });
   $('#viewTodo').addEventListener('click', (e) => {
+    // 빈 곳을 누르면 아래 입력란으로
+    if (!e.target.closest('[data-task],[data-toggle],button,a,input,form,.chips')) return $('#quick')?.focus();
     const tg = e.target.closest('[data-toggle]');
     if (tg) return toggleTask(tg.dataset.toggle);
     const tk = e.target.closest('[data-task]');

@@ -31,6 +31,7 @@
   <main class="views">
     <section class="view" id="viewCal" aria-label="일정"></section>
     <section class="view" id="viewTodo" aria-label="할 일" hidden></section>
+    <section class="view" id="viewMail" aria-label="메일·문자·통화" hidden></section>
   </main>
 
   <nav class="tabbar" role="tablist">
@@ -42,9 +43,9 @@
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12l3 3 5-6"/></svg>
       <span>할 일</span>
     </button>
-    <button type="button" class="tab-add" id="tabAdd" aria-label="추가">
-      <span class="plus">+</span>
-      <span>추가</span>
+    <button type="button" role="tab" data-tab="mail" aria-selected="false">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M4 7l8 6 8-6"/></svg>
+      <span>메일·문자</span><b class="tab-badge" id="mailBadge" hidden></b>
     </button>
   </nav>
 </div>
