@@ -59,7 +59,8 @@ const SYSTEM = `너는 한국의 회계·세무 실무자(회계사)가 받은 �
 {"title":"30자 이내 제목","gist":"무엇에 대한 내용인지 1~2문장","requests":["상대가 나에게 요청한 일(없으면 빈 배열)"],"dues":[{"date":"YYYY-MM-DD","start":"HH:MM 또는 null","end":"HH:MM 또는 null","place":"장소 또는 null","text":"근거가 된 짧은 문장"}],"company":"관련 회사 이름 또는 null"}
 - 날짜는 기준 시각을 기준으로 "내일", "다음 주 화요일" 등을 실제 날짜로 바꾼다.
 - 이미 지난 날짜, 인사말·서명·광고 문구는 넣지 않는다.
-- 통화 녹음 글은 음성 인식 결과라 틀린 글자가 있을 수 있으니 문맥으로 바로잡아 이해한다.`;
+- 통화 녹음 글은 음성 인식 결과라 틀린 글자가 있을 수 있으니 문맥으로 바로잡아 이해한다.
+- 짧게 쓴다: requests 최대 5개, dues 최대 5개, 각 text는 40자 이내. 코드 블록(\`\`\`) 없이 JSON만.`;
 
 /** 개인정보 가리기: 주민번호·카드·전화·계좌·이메일·긴 숫자 */
 function mask(t) {
@@ -72,6 +73,15 @@ function mask(t) {
     .replace(/\b\d{2,6}-\d{2,6}-\d{2,8}(?:-\d{1,4})?\b/g, (m) => (m.replace(/\D/g, '').length >= 10 ? '[계좌·번호]' : m))
     .replace(/\b\d{10,16}\b/g, '[번호]');
 }
+
+// 오류 기록 (내용은 남기지 않고 원인만)
+const logErr = (m) => {
+  try {
+    fs.appendFileSync(path.join(userData, 'ai-error.log'), `${new Date().toISOString()} ${String(m).slice(0, 300)}\n`);
+  } catch {
+    /* 무시 */
+  }
+};
 
 let cache = null;
 function getCache() {
@@ -109,24 +119,32 @@ async function summarize(o) {
   const from = o.mask ? (/[\d@]/.test(o.from || '') ? '상대' : String(o.from || '').replace(/<[^>]*>/g, '').trim()) : o.from || '';
   const subject = o.mask ? mask(o.subject) : o.subject;
   const user = `종류: ${kind}\n기준 시각: ${o.at}\n${o.kind === 'call' ? '통화 상대' : '보낸 사람'}: ${from}\n${subject ? `제목: ${subject}\n` : ''}\n내용:\n${body}`;
-  const res = await netFetch(`${API()}/v1/messages`, {
+  let res;
+  try {
+    res = await netFetch(`${API()}/v1/messages`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({ model: MODEL, max_tokens: 800, system: SYSTEM, messages: [{ role: 'user', content: user }] }),
-  });
+    body: JSON.stringify({ model: MODEL, max_tokens: 2000, system: SYSTEM, messages: [{ role: 'user', content: user }] }),
+    });
+  } catch (e) {
+    logErr(`net ${e.message}`);
+    return { ok: false, code: 'net', error: `인터넷 연결 오류: ${e.message}` };
+  }
   const j = await res.json().catch(() => ({}));
   if (!res.ok) {
     const msg = j?.error?.message || `HTTP ${res.status}`;
+    logErr(`http ${res.status} ${msg}`);
     const code = res.status === 401 ? 'auth' : /credit|balance|billing/i.test(msg) ? 'credit' : res.status === 429 ? 'rate' : 'error';
     const ko = { auth: 'API 키가 잘못되었거나 만료되었습니다.', credit: '크레딧이 부족합니다. Console → Billing에서 충전하세요.', rate: '요청이 많아 잠시 뒤 다시 시도합니다.' }[code];
     return { ok: false, code, error: ko || msg };
   }
-  const text = (j.content || []).map((b) => b.text || '').join('');
+  const text = (j.content || []).map((b) => b.text || '').join('').replace(/```(?:json)?/gi, '');
   let sum = null;
   try {
     sum = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
   } catch {
-    return { ok: false, code: 'parse', error: 'AI 응답을 읽지 못했습니다.' };
+    logErr(`parse stop=${j.stop_reason} out=${j.usage?.output_tokens} len=${text.length}`);
+    return { ok: false, code: 'parse', error: j.stop_reason === 'max_tokens' ? 'AI 응답이 너무 길어 잘렸습니다.' : 'AI 응답을 읽지 못했습니다.' };
   }
   // 사용량
   const u = readJson(usageFile(), {});

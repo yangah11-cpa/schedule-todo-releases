@@ -4253,7 +4253,7 @@ async function aiQueue() {
       else if (res.code === 'auth' || res.code === 'credit' || res.code === 'noKey') {
         S.aiErr = res.error;
         break;
-      } else if (res.code === 'rate') {
+      } else if (res.code === 'rate' || res.code === 'net') {
         await new Promise((ok) => setTimeout(ok, 20000));
         continue;
       } else aiRes.set(m.id, { err: res.error });
@@ -4456,7 +4456,7 @@ function renderMailView() {
         <button type="button" class="btn ${x.done ? '' : 'primary'}" data-mvdone>${x.done ? '완료 취소' : '✓ 완료'}</button></div>
       <div class="mv-scroll">
       <div class="mv-sum">
-        <div><h4>${x.mail.source === 'sms' ? '최근 문자 요지' : x.mail.source === 'call' ? '통화 요지' : '요지'}${x.sum.ai ? ' <span class="mv-aitag">AI</span>' : aiState().on && aiRes.get(x.mail.id)?.err ? ` <span class="mv-aierr" title="${h(aiRes.get(x.mail.id).err)}">AI 실패</span>` : ''}</h4><div class="mv-gist">${h(x.sum.gist || '(본문 없음)')}</div></div>
+        <div><h4>${x.mail.source === 'sms' ? '최근 문자 요지' : x.mail.source === 'call' ? '통화 요지' : '요지'}${x.sum.ai ? ' <span class="mv-aitag">AI</span>' : aiState().on && aiRes.get(x.mail.id)?.err ? ` <span class="mv-aierr">AI 실패: ${h(aiRes.get(x.mail.id).err)}</span> <button type="button" class="linkbtn" data-airetry>다시 시도</button>` : ''}</h4><div class="mv-gist">${h(x.sum.gist || '(본문 없음)')}</div></div>
         ${x.sum.requests.length ? `<div><h4>요청 사항</h4><ul>${x.sum.requests.map((r) => `<li>${h(r)}</li>`).join('')}</ul></div>` : ''}
         ${
           x.sum.dues.length
@@ -4742,6 +4742,12 @@ function bindMailView() {
       return;
     }
     if (e.target.closest('[data-mvco]')) return mvSetCompany(x);
+    if (e.target.closest('[data-airetry]')) {
+      aiRes.delete(x.mail.id);
+      S.aiErr = null;
+      renderMailView();
+      return aiQueue();
+    }
     if (e.target.closest('[data-mvplay]')) return window.api.calls.openFile(x.mail.file);
     const mb = e.target.closest('[data-mvme]');
     if (mb || e.target.closest('[data-mvswap]')) {
