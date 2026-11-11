@@ -3723,3 +3723,70 @@ function penalizeWords(words) {
   saveKw();
 }
 
+
+/* ───────────── 시간 선택 창 (스크롤 없이 한눈에: 오전/오후 · 1~12시 · 5분 단위) ───────────── */
+let tpop = null;
+function closeTimePop() {
+  tpop?.remove();
+  tpop = null;
+}
+function openTimePop(inp) {
+  closeTimePop();
+  const pad = (n) => String(n).padStart(2, '0');
+  const cur = () => {
+    const [H, M] = (inp.value || '09:00').split(':').map(Number);
+    return { pm: H >= 12, h12: H % 12 || 12, m: M };
+  };
+  const set = (pm, h12, m) => {
+    const H = (h12 % 12) + (pm ? 12 : 0);
+    inp.value = `${pad(H)}:${pad(m)}`;
+    inp.dispatchEvent(new Event('input', { bubbles: true }));
+    inp.dispatchEvent(new Event('change', { bubbles: true }));
+    draw();
+  };
+  tpop = document.createElement('div');
+  tpop.className = 'tpop';
+  const draw = () => {
+    const c = cur();
+    tpop.innerHTML = `
+      <div class="tcol">${['오전', '오후'].map((x, i) => `<button type="button" data-ap="${i}" class="${+c.pm === i ? 'on' : ''}">${x}</button>`).join('')}</div>
+      <div class="tcol">${Array.from({ length: 12 }, (_, i) => i + 1).map((x) => `<button type="button" data-hh="${x}" class="${c.h12 === x ? 'on' : ''}">${x}</button>`).join('')}</div>
+      <div class="tcol">${Array.from({ length: 12 }, (_, i) => i * 5).map((x) => `<button type="button" data-mm="${x}" class="${c.m === x ? 'on' : ''}">${pad(x)}</button>`).join('')}</div>`;
+  };
+  draw();
+  document.body.appendChild(tpop);
+  const r = inp.getBoundingClientRect();
+  const ph = tpop.offsetHeight;
+  tpop.style.left = `${Math.min(r.left, innerWidth - tpop.offsetWidth - 8)}px`;
+  tpop.style.top = `${r.bottom + 4 + ph < innerHeight ? r.bottom + 4 : Math.max(8, r.top - ph - 4)}px`;
+  tpop.addEventListener('mousedown', (e) => e.preventDefault()); // 입력칸 포커스 유지
+  tpop.addEventListener('click', (e) => {
+    e.stopPropagation(); // 다시 그리면서 버튼이 바뀌어도 '바깥 클릭'으로 닫히지 않게
+    const b = e.target.closest('button');
+    if (!b) return;
+    const c = cur();
+    if (b.dataset.ap !== undefined) set(b.dataset.ap === '1', c.h12, c.m);
+    else if (b.dataset.hh) set(c.pm, +b.dataset.hh, c.m);
+    else if (b.dataset.mm !== undefined) {
+      set(c.pm, c.h12, +b.dataset.mm);
+      closeTimePop(); // 분을 고르면 닫힘
+    }
+  });
+}
+document.addEventListener('click', (e) => {
+  const inp = e.target.closest?.('input[type="time"]');
+  if (inp && !inp.disabled && inp.offsetParent) {
+    if (!tpop) openTimePop(inp);
+    return;
+  }
+  if (tpop && !tpop.contains(e.target)) closeTimePop();
+});
+document.addEventListener('keydown', (e) => {
+  if (!tpop) return;
+  if (e.key === 'Escape') {
+    e.stopPropagation();
+    closeTimePop();
+  } else if (e.key === 'Tab' || e.key === 'Enter') closeTimePop();
+}, true);
+window.addEventListener('resize', closeTimePop);
+document.addEventListener('scroll', closeTimePop, true);

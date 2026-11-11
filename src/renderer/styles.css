@@ -352,3 +352,12 @@ mark.hl-place { background: #CDEFD6; }
 .kw.b { padding: 3px 10px; background: #EEECE7; color: #3D3A35; cursor: pointer; }
 .kw.b.off { text-decoration: line-through; opacity: 0.5; }
 .kw-base summary { cursor: pointer; color: #77736B; }
+/* 시간 선택 창 */
+input[type="time"]::-webkit-calendar-picker-indicator { display: none; }
+.tpop { position: fixed; z-index: 5000; display: flex; gap: 4px; padding: 6px; background: #fff; border: 1px solid #D8D5CE; border-radius: 10px; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16); }
+.tpop .tcol { display: flex; flex-direction: column; gap: 2px; }
+.tpop .tcol:not(:last-child) { padding-right: 4px; border-right: 1px solid #EEECE7; }
+.tpop button { width: 44px; height: 26px; border: 0; border-radius: 6px; background: none; font: inherit; font-size: 13px; font-variant-numeric: tabular-nums; cursor: pointer; color: #3D3A35; }
+.tpop .tcol:first-child button { width: 48px; }
+.tpop button:hover { background: #EEF3FC; }
+.tpop button.on { background: #2459C9; color: #fff; font-weight: 600; }
