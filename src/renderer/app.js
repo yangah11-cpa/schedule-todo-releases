@@ -2987,66 +2987,106 @@ function openContextMenu(x, y, date) {
 }
 
 /** 팀원 일정 보기: 선택한 날짜가 있는 주 */
-function openTeamView(date) {
+/** 팀원 일정 표 (한 주) — 팀 일정 탭과 창에서 함께 씀 */
+function teamTableHtml(cur, selDate) {
   const team = S.data.team?.parsed;
-  if (!team) {
+  const me = settings().teamMe;
+  const ws = D.addDays(cur, -((D.dow(cur) + 6) % 7)); // 월요일 시작
+  const days = Array.from({ length: 7 }, (_, i) => D.addDays(ws, i));
+  // 엑셀 팀 일정표 순서 그대로 (나는 강조), 같은 일정은 기간만큼 한 막대로 이어서 표시
+  const names = [...new Set(team.flatMap((p) => p.people.map((x) => x.name)))];
+  const we = days[6];
+  const today = D.today();
+  const cls = (d) => `${d === selDate ? 'sel' : ''} ${d === today ? 'today' : ''} ${D.dow(d) === 0 || D.dow(d) === 6 ? 'we' : ''}`;
+  const rowHtml = (name) => {
+    const segs = [];
+    for (const [pi, p] of team.entries()) {
+      const person = p.people.find((x) => x.name === name);
+      if (!person) continue;
+      for (const [ei, it] of person.entries.entries()) {
+        if (it.end < ws || it.start > we) continue;
+        const a = it.start < ws ? ws : it.start;
+        const b = it.end > we ? we : it.end;
+        segs.push({ it, pi, ei, a, b, i: D.diffDays(ws, a), n: D.diffDays(a, b) + 1, cont: it.start < ws, more: it.end > we });
+      }
+    }
+    segs.sort((x, y) => x.i - y.i || y.n - x.n);
+    let html = '';
+    let i = 0;
+    const chip = (g) =>
+      `<button type="button" class="tchip${g.it.lead ? ' lead' : ''}${g.cont ? ' cont' : ''}${g.more ? ' more' : ''}${g.it.orig ? ' edited' : ''}" data-tedit="${g.pi}|${h(name)}|${g.ei}" title="${h(g.it.text)}${g.it.work ? ` · ${h(g.it.work)}` : ''} ${h(D.shortLabel(g.it.start))} ~ ${h(D.shortLabel(g.it.end))}${g.it.lead ? ' · 인차지' : ''} — 눌러서 회사 이름·업무 내용 수정">${h(g.it.text)}${g.it.orig ? '<i class="ed">✎</i>' : ''}${g.it.work ? `<small>${h(g.it.work)}</small>` : ''}</button>`;
+    for (let k = 0; k < segs.length; k++) {
+      const g = segs[k];
+      if (g.i < i) continue; // 겹치는 일정은 앞 칸에 함께 표시됨
+      while (i < g.i) html += `<td class="${cls(days[i++])}"></td>`;
+      const stack = segs.filter((o) => o !== g && o.i >= g.i && o.i < g.i + g.n);
+      html += `<td colspan="${g.n}" class="span ${g.n === 1 ? cls(days[g.i]) : ''}">${chip(g)}${stack.map(chip).join('')}</td>`;
+      i = g.i + g.n;
+    }
+    while (i < 7) html += `<td class="${cls(days[i++])}"></td>`;
+    return `<tr class="${name === me ? 'tv-me' : ''}"><th>${h(name)}${name === me ? ' <small class="tv-metag">나</small>' : ''}</th>${html}</tr>`;
+  };
+  const inRange = team.some((p) => days.some((d) => d >= p.from && d <= p.to));
+  return `${inRange ? '' : '<div class="warn">이 주는 가져온 팀 일정표의 기간 밖입니다.</div>'}
+      <div style="overflow:auto">
+      <table class="tview">
+        <colgroup><col style="width:84px">${days.map(() => '<col>').join('')}</colgroup>
+        <thead><tr><th></th>${days.map((d) => `<th class="${cls(d)}">${D.parts(d).m}/${D.parts(d).d} (${D.DOW_KO[D.dow(d)]})</th>`).join('')}</tr></thead>
+        <tbody>${names.map(rowHtml).join('')}</tbody>
+      </table></div>
+      <div class="note">일정을 누르면 회사 이름·업무 내용을 고칠 수 있습니다 · ${h(S.data.team.fileName)} 기준 · 이 PC(와 내 휴대폰 앱)에만 보관되며 캘린더에는 등록하지 않습니다.</div>`;
+}
+const weekTitle = (cur) => {
+  const ws = D.addDays(cur, -((D.dow(cur) + 6) % 7));
+  const thu = D.parts(D.addDays(ws, 3));
+  const a = D.parts(ws);
+  const b = D.parts(D.addDays(ws, 6));
+  return `${thu.m}월 ${Math.ceil(thu.d / 7)}주 <small>${a.m}/${a.d} ~ ${b.m}/${b.d}</small>`;
+};
+/** 위쪽 '팀 일정' 탭 */
+function renderTeamTab() {
+  const v = $('#teamView');
+  if (!S.data.team?.parsed) {
+    v.innerHTML = `<div class="tv-wrap"><div class="tv-empty">아직 팀 일정표가 없습니다.<br><button type="button" class="btn primary" data-tvimport>팀 일정표 엑셀 가져오기</button></div></div>`;
+    return;
+  }
+  S.teamCur ||= D.today();
+  v.innerHTML = `<div class="tv-wrap"><div class="tv-head">
+      <button type="button" class="btn sq" data-tw="-7" aria-label="이전 주">‹</button>
+      <button type="button" class="tv-title" data-tw="0" title="눌러서 이번 주로">${weekTitle(S.teamCur)}</button>
+      <button type="button" class="btn sq" data-tw="7" aria-label="다음 주">›</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn" data-tvimport>팀 일정표 다시 가져오기</button>
+    </div>${teamTableHtml(S.teamCur, D.today())}</div>`;
+}
+function bindTeamTab() {
+  $('#teamView').addEventListener('click', (e) => {
+    const w = e.target.closest('[data-tw]');
+    if (w) {
+      S.teamCur = +w.dataset.tw === 0 ? D.today() : D.addDays(S.teamCur || D.today(), +w.dataset.tw);
+      return renderTeamTab();
+    }
+    if (e.target.closest('[data-tvimport]')) return importTeam();
+    const te = e.target.closest('[data-tedit]');
+    if (te) {
+      const [pi, name, ei] = te.dataset.tedit.split('|');
+      return editTeamEntry(+pi, name, +ei, renderTeamTab);
+    }
+  });
+}
+function openTeamView(date) {
+  if (!S.data.team?.parsed) {
     toast('먼저 상단의 "팀 일정 등록"으로 팀 일정표 엑셀을 가져오세요.');
     return;
   }
   let cur = date;
-  const me = settings().teamMe;
   const { el, close } = openModal('<div id="tvBody"></div>', { cls: 'xwide' });
   const draw = () => {
-    const ws = D.addDays(cur, -((D.dow(cur) + 6) % 7)); // 월요일 시작
-    const days = Array.from({ length: 7 }, (_, i) => D.addDays(ws, i));
-    // 엑셀 팀 일정표 순서 그대로 (나는 강조), 같은 일정은 기간만큼 한 막대로 이어서 표시
-    const names = [...new Set(team.flatMap((p) => p.people.map((x) => x.name)))];
-    const we = days[6];
-    const cls = (d) => `${d === date ? 'sel' : ''} ${D.dow(d) === 0 || D.dow(d) === 6 ? 'we' : ''}`;
-    const rowHtml = (name) => {
-      const segs = [];
-      for (const [pi, p] of team.entries()) {
-        const person = p.people.find((x) => x.name === name);
-        if (!person) continue;
-        for (const [ei, it] of person.entries.entries()) {
-          if (it.end < ws || it.start > we) continue;
-          const a = it.start < ws ? ws : it.start;
-          const b = it.end > we ? we : it.end;
-          segs.push({ it, pi, ei, a, b, i: D.diffDays(ws, a), n: D.diffDays(a, b) + 1, cont: it.start < ws, more: it.end > we });
-        }
-      }
-      segs.sort((x, y) => x.i - y.i || y.n - x.n);
-      let html = '';
-      let i = 0;
-      const chip = (g) =>
-        `<button type="button" class="tchip${g.it.lead ? ' lead' : ''}${g.cont ? ' cont' : ''}${g.more ? ' more' : ''}${g.it.orig ? ' edited' : ''}" data-tedit="${g.pi}|${h(name)}|${g.ei}" title="${h(g.it.text)}${g.it.work ? ` · ${h(g.it.work)}` : ''} ${h(D.shortLabel(g.it.start))} ~ ${h(D.shortLabel(g.it.end))}${g.it.lead ? ' · 인차지' : ''} — 눌러서 회사 이름·업무 내용 수정">${h(g.it.text)}${g.it.orig ? '<i class="ed">✎</i>' : ''}${g.it.work ? `<small>${h(g.it.work)}</small>` : ''}</button>`;
-      for (let k = 0; k < segs.length; k++) {
-        const g = segs[k];
-        if (g.i < i) continue; // 겹치는 일정은 앞 칸에 함께 표시됨
-        while (i < g.i) html += `<td class="${cls(days[i++])}"></td>`;
-        // 같은 기간에 겹치는 다른 일정은 같은 칸에 쌓기
-        const stack = segs.filter((o) => o !== g && o.i >= g.i && o.i < g.i + g.n);
-        html += `<td colspan="${g.n}" class="span ${g.n === 1 ? cls(days[g.i]) : ''}">${chip(g)}${stack.map(chip).join('')}</td>`;
-        i = g.i + g.n;
-      }
-      while (i < 7) html += `<td class="${cls(days[i++])}"></td>`;
-      return `<tr class="${name === me ? 'tv-me' : ''}"><th>${h(name)}${name === me ? ' <small class="tv-metag">나</small>' : ''}</th>${html}</tr>`;
-    };
-    const inRange = team.some((p) => days.some((d) => d >= p.from && d <= p.to));
     $('#tvBody', el).innerHTML = `
       <div class="mhead"><h1>팀원 일정</h1>
         <div class="row gap4"><button type="button" class="btn sq" data-w="-7" aria-label="이전 주">‹</button><button type="button" class="btn" data-w="0">${h(D.shortLabel(date))}</button><button type="button" class="btn sq" data-w="7" aria-label="다음 주">›</button></div>
         <button type="button" class="btn ghost icon" data-close aria-label="닫기">✕</button></div>
-      <div class="mbody" style="padding:12px 16px">
-        ${inRange ? '' : '<div class="warn">이 주는 가져온 팀 일정표의 기간 밖입니다.</div>'}
-        <div style="overflow:auto">
-        <table class="tview">
-          <colgroup><col style="width:72px">${days.map(() => '<col>').join('')}</colgroup>
-          <thead><tr><th></th>${days.map((d) => `<th class="${cls(d)}">${D.parts(d).m}/${D.parts(d).d} (${D.DOW_KO[D.dow(d)]})</th>`).join('')}</tr></thead>
-          <tbody>${names.map(rowHtml).join('')}</tbody>
-        </table></div>
-        <div class="note"><span class="tchip lead" style="display:inline-block">짙은 색</span> 인차지 · 일정을 누르면 회사 이름·업무 내용을 고칠 수 있습니다 · ${h(S.data.team.fileName)} 기준 · 이 정보는 이 PC(와 내 휴대폰 앱)에만 보관되며 캘린더에는 등록하지 않습니다.</div>
-      </div>`;
+      <div class="mbody" style="padding:12px 16px">${teamTableHtml(cur, date)}</div>`;
   };
   draw();
   el.addEventListener('click', (e) => {
@@ -3435,6 +3475,7 @@ async function init() {
   window.api.outlook.onPick?.(() => pickOutlookMail());
   window.api.clip?.onPick?.((d) => openClipChooser(d));
   bindMailView();
+  bindTeamTab();
   document.getElementById('aiMeter')?.addEventListener('click', () => openSettings('ai'));
   setTimeout(() => renderAiMeter(), 1500);
   window.api.calls?.onProgress?.((p) => {
@@ -4481,7 +4522,9 @@ function setAppTab(t) {
   document.querySelectorAll('[data-apptab]').forEach((b) => b.classList.toggle('on', b.dataset.apptab === t));
   $('main.main').hidden = t !== 'main';
   $('#mailView').hidden = t !== 'mail';
-  if (t === 'mail') {
+  $('#teamView').hidden = t !== 'team';
+  if (t === 'team') renderTeamTab();
+  else if (t === 'mail') {
     renderMailView();
     // 처음 열거나 10분 넘게 지났으면 새로 읽기
     if (!S.mailList || Date.now() - (S.mailListAt || 0) > 10 * 60000) scanMail(true, true);

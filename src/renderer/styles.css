@@ -520,3 +520,17 @@ tr.tv-me td { background: #FAF1EC; }
 /* 부드러운 모서리 (테라코타 테마) */
 .btn { border-radius: 10px; }
 .inp { border-radius: 10px; }
+
+/* 팀 일정 탭 */
+.teamview { flex: 1; min-height: 0; overflow: auto; padding: 14px 20px 18px; }
+.tv-wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 12px; }
+.tv-head { display: flex; align-items: center; gap: 8px; }
+.tv-title { border: 0; background: none; font-size: 19px; font-weight: 700; color: var(--ink); padding: 4px 8px; border-radius: 10px; cursor: pointer; }
+.tv-title:hover { background: var(--soft); }
+.tv-title small { font-size: 12.5px; font-weight: 400; color: var(--muted); margin-left: 6px; }
+.tv-empty { padding: 60px 0; text-align: center; color: var(--muted); line-height: 2.2; }
+.tview .today { background: #FBF1EC; }
+/* 팀원 줄 높이 키우기 */
+.tview tbody th, .tview tbody td { height: 58px; padding-top: 10px; padding-bottom: 10px; }
+.tview tbody th { font-size: 14px; vertical-align: middle; }
+.tview .tchip { min-height: 32px; }

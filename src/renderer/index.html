@@ -14,8 +14,9 @@
       <span>일정 &amp; 할일</span>
     </div>
     <div class="apptabs" role="tablist">
-      <button type="button" role="tab" data-apptab="main" class="on">📅 일정 · 할 일</button>
-      <button type="button" role="tab" data-apptab="mail">✉ 메일·문자<span class="mbadge" id="mailSumBadge" hidden></span></button>
+      <button type="button" role="tab" data-apptab="main" class="on">📅 일정</button>
+      <button type="button" role="tab" data-apptab="mail">✉ 메일<span class="mbadge" id="mailSumBadge" hidden></span></button>
+      <button type="button" role="tab" data-apptab="team">👥 팀 일정</button>
     </div>
     <div class="spacer"></div>
     <button class="btn primary" id="btnUpdate" type="button" hidden></button>
@@ -80,6 +81,7 @@
     </aside>
   </main>
   <main class="mailview" id="mailView" hidden></main>
+  <main class="teamview" id="teamView" hidden></main>
 </div>
 <div id="modalRoot"></div>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>

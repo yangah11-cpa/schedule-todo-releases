@@ -399,3 +399,7 @@ mark.hl-place { background: #CDEFD6; }
 /* 부드러운 모서리 (테라코타 테마) */
 .btn { border-radius: 12px; }
 .inp { border-radius: 12px; }
+/* 팀원 줄 높이 키우기 */
+.tw tbody th, .tw tbody td { height: 52px; padding-top: 7px; padding-bottom: 7px; }
+.tw tbody th { font-size: 13px; }
+.tc { padding: 6px 7px; font-size: 12.5px; border-radius: 7px; }
