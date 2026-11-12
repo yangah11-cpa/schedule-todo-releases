@@ -495,7 +495,7 @@ function todoRow(t) {
     }
   </div>`;
   if ((subs.length && open) || S.openSubAdd === t.id) {
-    html += `<div class="subs" style="padding:2px 0 8px 30px;display:flex;flex-direction:column;gap:2px;border-bottom:1px solid #EEECE7">`;
+    html += `<div class="subs" style="padding:2px 0 8px 30px;display:flex;flex-direction:column;gap:2px;border-bottom:1px solid #F0E9E1">`;
     for (const s of subs) {
       html += `<div class="row gap8" style="min-height:30px">
         <input type="checkbox" data-subcheck="${t.id}|${s.id}" ${s.done ? 'checked' : ''} style="width:16px;height:16px;margin:0;accent-color:var(--accent)" aria-label="${h(s.title)} 완료">
@@ -1865,7 +1865,7 @@ function openTodoDialog(existing = null, preset = null) {
         <div style="display:flex;flex-direction:column;border:1px solid var(--line2);border-radius:6px">
           ${f.subtasks
             .map(
-              (s, i) => `<div class="row gap8" style="height:38px;padding:0 6px 0 12px;border-bottom:1px solid #EEECE7">
+              (s, i) => `<div class="row gap8" style="height:38px;padding:0 6px 0 12px;border-bottom:1px solid #F0E9E1">
                 <input type="checkbox" data-sdone="${i}" ${s.done ? 'checked' : ''} aria-label="완료" style="width:16px;height:16px;margin:0;accent-color:var(--accent)">
                 <input class="grow" data-stitle="${i}" value="${h(s.title)}" aria-label="하위 할 일" style="border:0;height:30px;outline-offset:0;${s.done ? 'text-decoration:line-through;color:var(--faint)' : ''}">
                 <button type="button" class="btn ghost icon" data-sdel="${i}" aria-label="삭제" style="width:28px;height:28px">×</button>
@@ -2855,7 +2855,7 @@ function previewTeamImport(parsed, me) {
     $('#ti-list', el).innerHTML =
       rows
         .map(
-          (x, i) => `<label class="row gap10" style="padding:8px 12px;border-bottom:1px solid #EEECE7;align-items:flex-start;${x.kind === 'same' ? 'opacity:.6' : ''}">
+          (x, i) => `<label class="row gap10" style="padding:8px 12px;border-bottom:1px solid #F0E9E1;align-items:flex-start;${x.kind === 'same' ? 'opacity:.6' : ''}">
             <input type="checkbox" data-ti="${i}" ${x.kind === 'same' ? 'disabled' : 'checked'} style="margin-top:3px;width:16px;height:16px;accent-color:var(--accent)">
             <span class="grow" style="display:flex;flex-direction:column;gap:2px">
               <span><b style="color:${color[x.kind]};font-size:12px;margin-right:6px">${label[x.kind]}</b>${h(x.m ? x.m.title : x.ex.title)}</span>
@@ -2999,9 +2999,8 @@ function openTeamView(date) {
   const draw = () => {
     const ws = D.addDays(cur, -((D.dow(cur) + 6) % 7)); // 월요일 시작
     const days = Array.from({ length: 7 }, (_, i) => D.addDays(ws, i));
-    // 나(본인)는 맨 위, 같은 일정은 기간만큼 한 막대로 이어서 표시
-    const all = [...new Set(team.flatMap((p) => p.people.map((x) => x.name)))];
-    const names = [...all.filter((n) => n === me), ...all.filter((n) => n !== me)];
+    // 엑셀 팀 일정표 순서 그대로 (나는 강조), 같은 일정은 기간만큼 한 막대로 이어서 표시
+    const names = [...new Set(team.flatMap((p) => p.people.map((x) => x.name)))];
     const we = days[6];
     const cls = (d) => `${d === date ? 'sel' : ''} ${D.dow(d) === 0 || D.dow(d) === 6 ? 'we' : ''}`;
     const rowHtml = (name) => {
