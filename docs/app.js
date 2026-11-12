@@ -563,8 +563,7 @@ function renderCal() {
   const wk = Math.ceil(thu.d / 7);
   let html = `<div class="cal-nav">
       <button type="button" class="nav-btn" data-nav="-1" aria-label="이전 주">‹</button>
-      <div class="ym">${thu.m}월 ${wk}주<small>${a.m}/${a.d} ~ ${b.m}/${b.d}</small></div>
-      <button type="button" class="nav-btn text" data-nav="0">이번 주</button>
+      <button type="button" class="ym" data-nav="0" title="눌러서 이번 주로">${thu.m}월 ${wk}주<small>${a.m}/${a.d} ~ ${b.m}/${b.d}</small></button>
       <button type="button" class="nav-btn" data-nav="1" aria-label="다음 주">›</button>
     </div>
     ${gmCands().length ? `<button type="button" class="gm-banner" data-gmc>✉ 메일에서 찾은 일정 후보 <b>${gmCands().length}</b>건 ›</button>` : ''}
@@ -628,16 +627,21 @@ function renderCal() {
   }
   html += '</div></div>';
   // 선택한 주의 일정 목록(자세히): 장소·참여 인원 — 높이 고정, 안에서 스크롤
-  const detail = segs.filter((g) => g.kind === 'ev' && (g.e.place || g.e.people?.length)).sort((x, y) => x.i - y.i);
+  // 장소·참여 인원이 있는 일정 + 오늘 일정은 모두
+  const isToday = (e) => e.date <= today && e.endDate >= today;
+  const detail = segs
+    .filter((g) => g.kind === 'ev' && (g.e.place || g.e.people?.length || isToday(g.e)))
+    .sort((x, y) => x.e.date.localeCompare(y.e.date) || (x.e.allDay ? 0 : 1) - (y.e.allDay ? 0 : 1) || (x.e.startTime || '').localeCompare(y.e.startTime || ''));
   html += `<div class="wdetail"><div class="wdh"><b>일정 상세</b><span class="xs muted">${detail.length ? `${detail.length}건` : ''}</span></div>
     <div class="wdl">`;
-  if (!detail.length) html += '<div class="empty small">이 주에는 장소·참여 인원이 적힌 일정이 없습니다.</div>';
+  if (!detail.length) html += '<div class="empty small">이 주에는 오늘 일정이나 장소·참여 인원이 적힌 일정이 없습니다.</div>';
   else {
     html += `${detail
       .map((g) => {
         const e = g.e;
         const when = e.date === e.endDate ? `${D.parts(e.date).m}/${D.parts(e.date).d}` : `${D.parts(e.date).m}/${D.parts(e.date).d}~${D.parts(e.endDate).m}/${D.parts(e.endDate).d}`;
-        return `<button type="button" class="wd" data-ev="${h(e.key)}"><span class="wdw">${when}</span><span class="wdt">${h(e.title)}</span><span class="wdm">${h([e.place, e.people?.join(', ')].filter(Boolean).join(' · '))}</span></button>`;
+        const tm = !e.allDay && e.startTime ? `<small>${h(e.startTime)}${e.endTime ? `~${h(e.endTime)}` : ''}</small>` : '';
+        return `<button type="button" class="wd${isToday(e) ? ' today' : ''}" data-ev="${h(e.key)}"><span class="wdw">${when}${tm}</span><span class="wdt">${h(e.title)}</span>${e.place ? `<span class="wdm">📍 ${h(e.place)}</span>` : ''}${e.people?.length ? `<span class="wdm">👥 ${h(e.people.join(', '))}</span>` : ''}</button>`;
       })
       .join('')}`;
   }
@@ -657,8 +661,7 @@ function renderTeam() {
   const thu = D.parts(D.addDays(from, 3));
   $('#viewTeam').innerHTML = `<div class="cal-nav">
       <button type="button" class="nav-btn" data-nav="-1" aria-label="이전 주">‹</button>
-      <div class="ym">${thu.m}월 ${Math.ceil(thu.d / 7)}주<small>${a.m}/${a.d} ~ ${b.m}/${b.d}</small></div>
-      <button type="button" class="nav-btn text" data-nav="0">이번 주</button>
+      <button type="button" class="ym" data-nav="0" title="눌러서 이번 주로">${thu.m}월 ${Math.ceil(thu.d / 7)}주<small>${a.m}/${a.d} ~ ${b.m}/${b.d}</small></button>
       <button type="button" class="nav-btn" data-nav="1" aria-label="다음 주">›</button>
     </div>${renderTeamWeek(days)}`;
 }
