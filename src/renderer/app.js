@@ -3076,7 +3076,7 @@ function bindTeamTab() {
 }
 function openTeamView(date) {
   if (!S.data.team?.parsed) {
-    toast('먼저 상단의 "팀 일정 등록"으로 팀 일정표 엑셀을 가져오세요.');
+    toast('먼저 위쪽 "팀 일정" 탭으로 팀 일정표 엑셀을 가져오세요.');
     return;
   }
   let cur = date;
@@ -3141,7 +3141,7 @@ function editTeamEntry(pi, name, ei, redraw) {
        <div class="fld"><label class="lbl" for="te-c">회사 이름</label><input class="inp" id="te-c" value="${h(it.text)}"></div>
        <div class="fld" style="margin-top:10px"><label class="lbl" for="te-w">업무 내용</label><input class="inp" id="te-w" value="${h(it.work || '')}" placeholder="${h(p.workType ? `${p.workType} (일정표 기본값)` : '예: 중간감사, 재고실사')}"></div>
        ${mates.length ? `<label class="checkline small" style="margin-top:12px"><input type="checkbox" id="te-all" checked>같은 일정의 다른 팀원에게도 적용 (${h(mates.map((m) => m.o.name).join(', '))})</label>` : ''}
-       <div class="note" style="margin-top:8px">수정 내용은 이 PC에 기억되어 팀 일정표를 다시 가져와도 그대로 적용됩니다. 내 일정은 다음에 "팀 일정 등록"을 할 때 캘린더 제목에 반영됩니다.</div>
+       <div class="note" style="margin-top:8px">수정 내용은 이 PC에 기억되어 팀 일정표를 다시 가져와도 그대로 적용됩니다. 내 일정은 다음에 팀 일정표를 가져올 때 캘린더 제목에 반영됩니다.</div>
      </div>
      <div class="mfoot">${it.orig ? '<button type="button" class="btn" data-reset>원래대로</button>' : ''}<div class="spacer"></div><button type="button" class="btn" data-x>취소</button><button type="button" class="btn primary" data-save>저장</button></div>`,
     { cls: 'narrow' }
@@ -3252,7 +3252,8 @@ function bind() {
       maybeRefresh();
     };
   });
-  $('#btnTeamImport').onclick = () => importTeam();
+  const bti = $('#btnTeamImport');
+  if (bti) bti.onclick = () => importTeam();
   const bm = $('#btnMail');
   if (bm) bm.onclick = () => openMailDialog();
   $('#btnAddEvent').onclick = () => openEventDialog({ date: S.view === 'month' && S.cursor.slice(0, 7) !== D.today().slice(0, 7) ? S.cursor : S.view === 'month' ? D.today() : S.cursor });
