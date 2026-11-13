@@ -19,7 +19,7 @@ const SHERPA_VER = '2.0.1';
 const SHERPA_PLAT = `sherpa-onnx-${os.platform() === 'win32' ? 'win' : os.platform()}-${os.arch()}`;
 const NPM = (n) => `https://registry.npmjs.org/${n}/-/${n}-${SHERPA_VER}.tgz`;
 const SK = 'https://github.com/k2-fsa/sherpa-onnx/releases/download';
-const SEG_URL = `${SK}/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2`;
+const VAD_URL = `${SK}/asr-models/silero_vad.onnx`;
 const EMB_FILE = '3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx';
 const EMB_URL = `${SK}/speaker-recongition-models/${EMB_FILE}`;
 
@@ -41,10 +41,10 @@ function parseName(name) {
 const textPath = (name) => path.join(textDir(), name.replace(/\.[^.]+$/, '.txt'));
 const jsonPath = (name) => path.join(textDir(), name.replace(/\.[^.]+$/, '.json'));
 const sherpaDir = () => process.env.ST_SHERPA_DIR || path.join(path.dirname(whisperDir()), 'sherpa');
-const diarModels = () => ({ seg: path.join(sherpaDir(), 'models', 'sherpa-onnx-pyannote-segmentation-3-0', 'model.onnx'), emb: path.join(sherpaDir(), 'models', EMB_FILE) });
+const diarModels = () => ({ vad: path.join(sherpaDir(), 'models', 'silero_vad.onnx'), emb: path.join(sherpaDir(), 'models', EMB_FILE) });
 const diarReady = () => {
   const m = diarModels();
-  return fs.existsSync(path.join(sherpaDir(), 'node_modules', 'sherpa-onnx-node', 'package.json')) && fs.existsSync(path.join(sherpaDir(), 'node_modules', SHERPA_PLAT, 'package.json')) && fs.existsSync(m.seg) && fs.existsSync(m.emb);
+  return fs.existsSync(path.join(sherpaDir(), 'node_modules', 'sherpa-onnx-node', 'package.json')) && fs.existsSync(path.join(sherpaDir(), 'node_modules', SHERPA_PLAT, 'package.json')) && fs.existsSync(m.vad) && fs.existsSync(m.emb);
 };
 
 /* ── '나' 찾기: 모든 통화에 공통으로 나오는 목소리 = 나 ── */
@@ -65,16 +65,20 @@ const readJson = (p) => {
     return null;
   }
 };
-const readVoice = () => readJson(voicePath()) || {};
+// v2: 새 목소리 구분 방식. 예전 방식으로 배운 목소리는 버리고 다시 배운다
+const readVoice = () => {
+  const v = readJson(voicePath()) || {};
+  return v.ev === 2 ? v : {};
+};
 const writeVoice = (v) => {
   fs.mkdirSync(textDir(), { recursive: true });
-  fs.writeFileSync(voicePath(), JSON.stringify(v));
+  fs.writeFileSync(voicePath(), JSON.stringify({ ...v, ev: 2 }));
 };
 /** 통화 하나의 '나' 화자 번호 (사용자가 고친 것 > 목소리 비교) */
 function meOf(rec, voice = readVoice()) {
   if (!rec?.emb) return null;
   if (rec.meBy === 'user' && rec.me != null) return rec.me;
-  if (!voice.me) return null;
+  if (!voice.me || rec.ev !== 2) return null;
   const ks = Object.keys(rec.emb);
   let best = null;
   let bs = -2;
@@ -95,7 +99,7 @@ function learnVoice() {
     if (!f.endsWith('.json') || f === 'voice.json') continue;
     const r = readJson(path.join(textDir(), f));
     const p = parseName(f.replace(/\.json$/, '.m4a'));
-    if (r?.emb && p) recs.push({ r, who: digitsOf(p.who) || p.who });
+    if (r?.emb && r.ev === 2 && p) recs.push({ r, who: digitsOf(p.who) || p.who });
   }
   // 사용자가 직접 정한 통화가 있으면 그것으로
   const u = recs.find((x) => x.r.meBy === 'user' && x.r.emb[x.r.me]);
@@ -130,7 +134,7 @@ function setMe({ name, spk }) {
   r.me = +spk;
   r.meBy = 'user';
   fs.writeFileSync(p, JSON.stringify(r));
-  const e = r.emb?.[spk];
+  const e = r.ev === 2 ? r.emb?.[spk] : null;
   if (e) {
     const v = readVoice();
     v.me = v.me ? norm(v.me.map((x, i) => x + norm(e)[i])) : norm(e);
@@ -291,11 +295,10 @@ async function installDiar(onProgress) {
       await untar(f, dest, 1);
     }
     const m = diarModels();
-    if (!fs.existsSync(m.seg)) {
-      const f = path.join(tmp, 'seg.tar.bz2');
-      await download(SEG_URL, f, (g, t) => onProgress?.({ step: '목소리 구분 모델 1/2', got: g, total: t }));
-      await untar(f, path.join(base, 'models'));
-    }
+    fs.mkdirSync(path.join(base, 'models'), { recursive: true });
+    if (!fs.existsSync(m.vad)) await download(VAD_URL, m.vad, (g, t) => onProgress?.({ step: '목소리 구분 모델 1/2', got: g, total: t }));
+    // 예전 방식에서 쓰던 모델(더는 안 씀)
+    fs.rm(path.join(base, 'models', 'sherpa-onnx-pyannote-segmentation-3-0'), { recursive: true, force: true }, () => {});
     if (!fs.existsSync(m.emb)) await download(EMB_URL, m.emb, (g, t) => onProgress?.({ step: '목소리 구분 모델 2/2', got: g, total: t }));
   } finally {
     fs.rm(tmp, { recursive: true, force: true }, () => {});
@@ -308,7 +311,7 @@ function diarize(wavPath, tmp) {
     const m = diarModels();
     const cfg = path.join(tmp, 'diar.json');
     const out = path.join(tmp, 'diar-out.json');
-    fs.writeFileSync(cfg, JSON.stringify({ sherpa: sherpaDir(), seg: m.seg, emb: m.emb, wav: wavPath, out, speakers: 2 }));
+    fs.writeFileSync(cfg, JSON.stringify({ sherpa: sherpaDir(), vad: m.vad, emb: m.emb, wav: wavPath, out }));
     const plat = path.join(sherpaDir(), 'node_modules', SHERPA_PLAT);
     const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1', PATH: `${plat}${path.delimiter}${process.env.PATH || ''}`, LD_LIBRARY_PATH: `${plat}${path.delimiter}${process.env.LD_LIBRARY_PATH || ''}` };
     const p = spawn(process.execPath, [path.join(__dirname, 'diarize.js'), cfg], { env, windowsHide: true });
@@ -412,6 +415,13 @@ async function transcribe({ name, file, wav, model = 'small', seconds = 60, free
     // 목소리 구분 (설치돼 있을 때만, 실패해도 글은 저장)
     let diar = null;
     let diarErr = null;
+    // 예전 방식 설치본: 새 방식에 필요한 작은 파일(0.6MB)만 받아 둠
+    if (useDiar && !diarReady() && fs.existsSync(path.join(sherpaDir(), 'node_modules', SHERPA_PLAT, 'package.json')))
+      try {
+        await installDiar();
+      } catch (e) {
+        diarErr = e.message;
+      }
     if (useDiar && diarReady())
       try {
         diar = await diarize(w, tmp);
@@ -422,7 +432,7 @@ async function transcribe({ name, file, wav, model = 'small', seconds = 60, free
     const text = lines.map((l) => l.text).join('\n\n');
     fs.mkdirSync(textDir(), { recursive: true });
     fs.writeFileSync(textPath(name), text, 'utf8');
-    const rec = { v: 2, lines, emb: diar?.emb || null, me: null, meBy: null, diarErr };
+    const rec = { v: 2, ev: diar?.v === 2 ? 2 : undefined, lines, emb: diar?.emb || null, me: null, meBy: null, diarErr };
     fs.writeFileSync(jsonPath(name), JSON.stringify(rec));
     if (rec.emb) learnVoice();
     // 다 쓴 녹음 파일은 다시 OneDrive 온라인 전용으로 (공간 확보)
@@ -435,4 +445,4 @@ async function transcribe({ name, file, wav, model = 'small', seconds = 60, free
   }
 }
 
-module.exports = { init, list, status, install, readAudio, transcribe, setMe, mergeSpeakers, learnVoice, meOf, parseName, cleanText, defaultDir, MODELS };
+module.exports = { init, list, status, install, readAudio, transcribe, setMe, mergeSpeakers, diarize, learnVoice, meOf, parseName, cleanText, defaultDir, MODELS };

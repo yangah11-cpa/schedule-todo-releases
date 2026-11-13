@@ -2202,7 +2202,7 @@ async function openSettings(startPage = null) {
             <select class="inp" id="s-callmodel" style="width:auto;height:34px"><option value="small" ${cs.model === 'small' ? 'selected' : ''}>빠름 · small (약 260MB)</option><option value="turbo" ${cs.model === 'turbo' ? 'selected' : ''}>정확 · large-v3-turbo (약 570MB, 느림)</option></select></div>
           <div class="row gap8"><label class="small" for="s-callauto">자동 변환</label>
             <select class="inp" id="s-callauto" style="width:auto;height:34px">${[1, 3, 7].map((d) => `<option value="${d}" ${cs.auto === d ? 'selected' : ''}>${d === 1 ? '오늘' : `최근 ${d}일`} 녹음</option>`).join('')}</select></div>
-          <label class="checkline small"><input type="checkbox" id="s-calldiar" ${cs.diar ? 'checked' : ''}>목소리 구분해서 말풍선으로 보기 (실험 · 정확도 낮음, 끄면 문단으로)</label>
+          <label class="checkline small"><input type="checkbox" id="s-calldiar" ${cs.diar ? 'checked' : ''}>목소리 구분해서 말풍선으로 보기 (나 / 상대, 끄면 문단으로)</label>
           <label class="checkline small"><input type="checkbox" id="s-callfree" ${cs.free !== false ? 'checked' : ''}>변환 후 녹음 파일을 다시 '온라인 전용'으로 (PC 공간 확보)</label>
           <div class="kv"><span>음성 인식</span><span class="small" id="s-callst">확인 중…</span><button type="button" class="btn" data-callinst hidden>설치</button></div>
           <span class="note">녹음과 글은 PC 밖으로 나가지 않습니다. 글은 프로그램 데이터 폴더(calls)에만 저장됩니다.</span>`,
