@@ -174,11 +174,11 @@ function findDates(text, base) {
   const dot = /(?<![\d.])(\d{1,2})\s*\.\s*(\d{1,2})\s*\.?\s*\(\s*([일월화수목금토])(?:요일)?\s*\)/g;
   while ((m = dot.exec(text))) push(nearYear(+m[1], +m[2], base), m.index, m[0].length);
 
-  // 20일(목) — 요일과 맞는 가장 가까운 달
-  const dayOnly = /(?<![\d월.\/])(\d{1,2})\s*일\s*\(\s*([일월화수목금토])(?:요일)?\s*\)/g;
+  // 20일(목) / 20일 목요일 — 요일과 맞는 가장 가까운 달
+  const dayOnly = /(?<![\d월.\/])(\d{1,2})\s*일\s*(?:\(\s*([일월화수목금토])(?:요일)?\s*\)|([일월화수목금토])요일)/g;
   while ((m = dayOnly.exec(text))) {
     const d = +m[1];
-    const w = DOW[m[2]];
+    const w = DOW[m[2] || m[3]];
     let { y, m: mo } = parts(base);
     let hit = null;
     for (let k = -1; k <= 2 && !hit; k++) {
@@ -372,6 +372,25 @@ export function highlightHtml(text, hits, esc) {
  * 휴대폰에서 공유한 글(카톡·문자·통화 요약 등) → 새 일정에 채울 값
  * 사용자가 직접 보낸 글이므로 일정 단어가 없어도 날짜가 있으면 쓴다.
  */
+/** 공유한 짧은 글 전용: "18일"(이번 달·다음 달 중 다가오는 날), "수요일"(다가오는 그 요일) */
+function looseDate(text, base) {
+  const { y, m: mo, d: bd } = parts(base);
+  const day = text.match(/(?<![\d월.\/])(\d{1,2})\s*일(?!\s*(?:간|이내|동안|째|치|분|정도|만에|전|후|마다|씩))/);
+  if (day) {
+    const d = +day[1];
+    let yy = y;
+    let mm = mo;
+    if (d < bd) (mm += 1), mm > 12 && ((mm = 1), yy++);
+    if (valid(yy, mm, d)) return { date: make(yy, mm, d), idx: day.index, len: day[0].length };
+  }
+  const w = text.match(/(?<![가-힣])([일월화수목금토])요일/);
+  if (w) {
+    const diff = (DOW[w[1]] - dow(base) + 7) % 7;
+    return { date: addDays(base, diff), idx: w.index, len: w[0].length };
+  }
+  return null;
+}
+
 export function parseShared(raw, today, now) {
   let text = String(raw || '').replace(/\r/g, '');
   // 카톡 대화 내보내기: "[이름] [오후 3:21] 내용" 의 앞부분(보낸 시각)과 날짜 구분선은 일정이 아님
@@ -383,8 +402,21 @@ export function parseShared(raw, today, now) {
   const first = text.split('\n').map((l) => l.trim()).find(Boolean) || '';
   let c = mailCandidates({ id: 'share', subject: '', received: now, body: text }, today, now)[0];
   if (!c) {
-    const d = findDates(text, today).find((x) => (x.endDate || x.date) >= today);
-    if (d) c = { date: d.date, endDate: d.endDate || d.date, allDay: true, startTime: null, endTime: null, hits: [{ t: text.slice(d.idx, d.idx + d.len) }], snippet: first };
+    // 공유한 짧은 글: 날짜만 있거나("18일", "수요일") 날짜 뒤 시간도 함께 찾기
+    const d = findDates(text, today).find((x) => (x.endDate || x.date) >= today) || looseDate(text, today);
+    if (d) {
+      const after = text.slice(d.idx + d.len, d.idx + d.len + 40);
+      const tm = findTime(after);
+      c = {
+        date: d.date,
+        endDate: d.endDate || d.date,
+        allDay: !tm,
+        startTime: tm?.start || null,
+        endTime: tm?.end || null,
+        hits: [{ t: text.slice(d.idx, d.idx + d.len) }, ...(tm?.raw ? [{ t: tm.raw }] : [])],
+        snippet: first,
+      };
+    }
   }
   // "본사 3층 회의실에서"처럼 장소 표시 없이 쓴 장소
   const loose = (text.match(/((?:[가-힣A-Za-z0-9]+\s){0,3}[가-힣A-Za-z0-9]*(?:회의실|사무실|사무소|층|호실|역|카페|센터|빌딩|타워|본사|지점|공장|식당|호텔))\s*(?:에서|으로|로)(?=\s|$)/) || [])[1] || '';
@@ -400,7 +432,8 @@ export function parseShared(raw, today, now) {
     .replace(/^(?:은|는|에|에는)\s+/, '')
     .replace(/\s{2,}/g, ' ')
     .trim()
-    .replace(/\s*(?:입니다|이에요|예요|입니당|이요|입니다요)\s*[.!]*$/, '')
+    .replace(/[\s~!.]+$/, '')
+    .replace(/\s*(?:입니다|이에요|예요|입니당|이요|입니다요)\s*[.!~]*$/, '')
     .replace(/(?:은|는|이|가|:|：)\s*$/, '')
     .replace(/\s+(?:일시|일자|날짜|시간|시각)\s*$/, '')
     .replace(/\s*(?:은|는)\s+(?=\S*$)/, ' ')
