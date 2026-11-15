@@ -165,3 +165,31 @@ export function searchContracts(A, q, limit = 12) {
   for (const [c, v] of Object.entries(A.hours || {})) if (key(c).toLowerCase().includes(s) || key(v.co).toLowerCase().includes(s)) add(c, v.co);
   return out;
 }
+
+/** 엑셀·시스템 화면에서 복사한 글(탭으로 칸 구분) → 표. 칸 안 줄바꿈("최소표준\n감사시간")은 따옴표로 감싸져 옴 */
+export function parseClipboardTable(text) {
+  const t = String(text || '').replace(/\r\n?/g, '\n');
+  const rows = [];
+  let row = [];
+  let cur = '';
+  let q = false;
+  const cell = (s) => {
+    const v = s.trim();
+    if (v === '') return null;
+    const n = v.replace(/,/g, '');
+    return /^-?\d+(\.\d+)?$/.test(n) && !/^0\d/.test(n) ? Number(n) : v;
+  };
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i];
+    if (q) {
+      if (ch === '"' && t[i + 1] === '"') (cur += '"'), i++;
+      else if (ch === '"') q = false;
+      else cur += ch;
+    } else if (ch === '"' && cur === '') q = true;
+    else if (ch === '\t') row.push(cell(cur)), (cur = '');
+    else if (ch === '\n') row.push(cell(cur)), rows.push(row), (row = []), (cur = '');
+    else cur += ch;
+  }
+  if (cur || row.length) row.push(cell(cur)), rows.push(row);
+  return { name: '붙여넣기', rows };
+}

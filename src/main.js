@@ -269,6 +269,7 @@ app.whenReady().then(() => {
     })
   );
   // 감사시간 탭: 회사 시스템에서 받은 엑셀(투입시간·담당이사·계약목록) 읽기. 이 PC에만 보관
+  ipcMain.handle('clip:text', () => clipboard.readText());
   ipcMain.handle(
     'audit:open',
     wrap(async () => {

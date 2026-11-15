@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('api', {
   drive: { save: call('drive:save'), load: call('drive:load') },
   team: { open: call('team:open') },
   audit: { open: call('audit:open') },
+  clipText: call('clip:text'),
   phone: { messages: call('phone:messages'), thread: call('phone:thread'), contacts: call('phone:contacts') },
   calls: {
     list: call('calls:list'),
