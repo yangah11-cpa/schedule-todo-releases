@@ -557,3 +557,26 @@ tr.tv-me td { background: #FAF1EC; }
 .au-more summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 .au-more textarea { width: 100%; max-width: 520px; margin-top: 6px; font-size: 13px; }
 .au-num::-webkit-outer-spin-button, .au-num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.au-scroll { overflow-x: auto; }
+.au-scroll .au-t { width: max-content; min-width: 100%; }
+.au-t th { text-align: center; line-height: 1.3; }
+.au-t .au-co { min-width: 150px; }
+.au-t tr.grp th { font-size: 12px; color: var(--muted); height: 28px; }
+.au-t .au-pl { background: #FBF6F2; }
+.au-t thead .au-pl { background: #F5EBE4; }
+.au-t .g0 { border-left: 2px solid #D9A893; }
+.au-t .au-num { width: 72px; }
+.au-scroll .au-t th, .au-scroll .au-t td { padding: 4px 6px; font-size: 12.5px; }
+.au-scroll .au-t .au-num { width: 62px; padding: 3px 5px; }
+.au-scroll .au-t .au-num.sm { width: 46px; }
+.au-scroll .au-t .au-co { min-width: 0; max-width: 170px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.au-scroll .au-t td, .au-scroll .au-t th { white-space: nowrap; }
+.au-t .st0, .au-t .st1, .au-t .st2 { position: sticky; z-index: 1; background: var(--panel); }
+.au-t thead .st0, .au-t thead .st1, .au-t thead .st2 { background: #FCF9F6; }
+.au-t .st0 { left: 0; min-width: 34px; }
+.au-t .st1 { left: 34px; }
+.au-t .btn.icon { width: 24px; height: 24px; min-width: 0; padding: 0; font-size: 12px; }
+.au-scroll .au-t .au-num { width: 58px; }
+.au-scroll .au-t .au-num.sm { width: 42px; }
+.au-scroll .au-t th, .au-scroll .au-t td { padding: 4px 5px; }
+.au-scroll .au-t .au-co { max-width: 160px; }

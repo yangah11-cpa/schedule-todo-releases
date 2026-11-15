@@ -3083,7 +3083,7 @@ const auData = () => (S.data.audit ||= { projects: [] });
 const auN0 = (v) => (Number.isFinite(v) ? Math.round(v).toLocaleString('ko-KR') : '');
 const auN1 = (v) => (Number.isFinite(v) ? (Math.round(v * 10) / 10).toLocaleString('ko-KR') : '');
 const auPct = (v) => (Number.isFinite(v) ? `${(v * 100).toFixed(1)}%` : '');
-const auNumIn = (i, f, v, ph = '') => `<input class="inp au-num" type="number" step="any" data-auf="${i}|${f}" value="${v ?? ''}" placeholder="${h(ph)}">`;
+const auNumIn = (i, f, v, ph = '') => `<input class="inp au-num ${['days', 'people', 'hpd'].includes(f) ? 'sm' : ''}" type="number" step="any" data-auf="${i}|${f}" value="${v ?? ''}" placeholder="${h(ph)}">`;
 function renderAuditTab() {
   const v = $('#auditView');
   const A = auData();
@@ -3102,38 +3102,41 @@ function renderAuditTab() {
     v.innerHTML = `<div class="tv-wrap">${head}<div class="tv-empty">회사 시스템에서 받은 <b>투입시간 · 담당이사 · 계약목록</b> 엑셀을 올린 뒤<br>보고 싶은 프로젝트 코드를 위 칸에서 추가하세요.<br><span class="muted small">여러 파일을 한 번에 골라도 되고, 예전 AuditHour 엑셀을 올리면 프로젝트 목록도 같이 가져옵니다.</span></div></div>`;
     return;
   }
+  const sum = { days: 0, ic: 0, icd: 0, total: 0 };
   const t1 = rows
-    .map(
-      (r, i) => `<tr>
-      <td class="c">${i + 1}</td>
-      <td><b>${h(r.code)}</b>${r.missing.length ? `<div class="au-warn">${h(r.missing.join(', '))}에 없음</div>` : ''}</td>
-      <td>${h(r.co)}</td><td>${h(r.kind)}</td><td>${h(r.partner)}</td>
-      <td class="n">${auNumIn(i, 'std', A.projects[i].std, r.stdFromData ? auN0(r.std) : '')}</td>
-      <td class="n">${auN0(r.used)}</td><td class="n">${auN0(r.need)}</td><td class="n">${auN0(r.fee)}</td><td class="n">${auN0(r.perHour)}</td>
-      <td class="n ${r.ratio >= 1 ? 'au-hi' : ''}">${auPct(r.ratio)}</td>
-      <td class="n">${auNumIn(i, 'pHrs', A.projects[i].pHrs, auN1(r.partnerHrs))}</td>
-      <td class="n ${A.projects[i].pHrs == null && r.partnerRatio < 0.05 ? 'au-lo' : ''}">${auPct(A.projects[i].pHrs != null ? (r.used ? A.projects[i].pHrs / r.used : 0) : r.partnerRatio)}</td>
-      <td class="c"><button type="button" class="btn ghost icon" data-audel="${i}" aria-label="삭제" title="목록에서 빼기">✕</button></td></tr>`
-    )
-    .join('');
-  const sum = { days: 0, ic: 0, icd: 0 };
-  const t2 = rows
     .map((r, i) => {
+      const p = A.projects[i];
       sum.days += r.days;
       sum.ic += r.inCharge;
       sum.icd += r.inChargeDays;
-      return `<tr><td>${h(r.co || r.code)}</td>
-        <td class="n">${auNumIn(i, 'days', A.projects[i].days, '0')}</td><td class="n">${auNumIn(i, 'people', A.projects[i].people, '0')}</td><td class="n">${auNumIn(i, 'hpd', A.projects[i].hpd, '13')}</td>
-        <td class="n">${auN1(r.total)}</td><td class="n">${auN0(r.need)}</td><td class="n">${auN1(r.inCharge)}</td><td class="n">${auN1(r.inChargeDays)}</td><td class="n">${auN1(r.perPerson)}</td></tr>`;
+      sum.total += r.total;
+      return `<tr>
+      <td class="c st0">${i + 1}</td>
+      <td class="st1"><b>${h(r.code)}</b>${r.missing.length ? `<div class="au-warn">${h(r.missing.join(', '))}에 없음</div>` : ''}</td>
+      <td class="au-co st2">${h(r.co)}</td><td>${h(r.kind)}</td><td>${h(r.partner)}</td>
+      <td class="n">${auNumIn(i, 'std', p.std, r.stdFromData ? auN0(r.std) : '')}</td>
+      <td class="n">${auN0(r.used)}</td><td class="n">${auN0(r.need)}</td><td class="n">${auN0(r.fee)}</td><td class="n">${auN0(r.perHour)}</td>
+      <td class="n ${r.ratio >= 1 ? 'au-hi' : ''}">${auPct(r.ratio)}</td>
+      <td class="n">${auNumIn(i, 'pHrs', p.pHrs, auN1(r.partnerHrs))}</td>
+      <td class="n ${p.pHrs == null && r.partnerRatio < 0.05 ? 'au-lo' : ''}">${auPct(p.pHrs != null ? (r.used ? p.pHrs / r.used : 0) : r.partnerRatio)}</td>
+      <td class="n au-pl g0">${auNumIn(i, 'days', p.days, '0')}</td><td class="n au-pl">${auNumIn(i, 'people', p.people, '0')}</td><td class="n au-pl">${auNumIn(i, 'hpd', p.hpd, '13')}</td>
+      <td class="n au-pl">${auN1(r.total)}</td><td class="n au-pl">${auN1(r.inCharge)}</td><td class="n au-pl">${auN1(r.inChargeDays)}</td><td class="n au-pl">${auN1(r.perPerson)}</td>
+      <td class="c"><button type="button" class="btn ghost icon" data-audel="${i}" aria-label="삭제" title="목록에서 빼기">✕</button></td></tr>`;
     })
     .join('');
   const procs = (A.procs?.length ? A.procs : AUDIT_PROCS).join('\n');
   v.innerHTML = `<div class="tv-wrap">${head}
-    <table class="au-t"><thead><tr><th>순번</th><th>프로젝트코드</th><th>회사명</th><th>계약종류</th><th>담당이사</th><th>표준감사시간</th><th>입력시간</th><th>필요시간</th><th>보수</th><th>시간당 보수</th><th>비율</th><th>담당이사 투입시간</th><th>투입시간 비율</th><th></th></tr></thead><tbody>${t1}</tbody></table>
-    <table class="au-t au-plan"><thead><tr><th>회사명</th><th>투입일수</th><th>투입인원</th><th>투입시간</th><th>총 투입시간</th><th>필요시간</th><th>인차지 투입시간</th><th>인차지 투입일수</th><th>인당 투입시간</th></tr></thead>
-      <tbody>${t2}<tr class="sum"><td>합계</td><td class="n">${auN1(sum.days)}</td><td></td><td></td><td></td><td></td><td class="n">${auN1(sum.ic)}</td><td class="n">${auN1(sum.icd)}</td><td></td></tr></tbody></table>
+    <div class="au-scroll"><table class="au-t"><thead>
+      <tr class="grp"><th colspan="13">프로젝트</th><th colspan="7" class="au-pl g0">투입 계획</th><th></th></tr>
+      <tr><th class="st0">순번</th><th class="st1">프로젝트코드</th><th class="st2">회사명</th><th>계약종류</th><th>담당이사</th><th>표준<br>감사시간</th><th>입력<br>시간</th><th>필요<br>시간</th><th>보수</th><th>시간당<br>보수</th><th>비율</th><th>담당이사<br>투입시간</th><th>투입시간<br>비율</th>
+      <th class="au-pl g0">투입일수</th><th class="au-pl">투입인원</th><th class="au-pl">투입시간</th><th class="au-pl">총<br>투입시간</th><th class="au-pl">인차지<br>투입시간</th><th class="au-pl">인차지<br>투입일수</th><th class="au-pl">인당<br>투입시간</th><th></th></tr></thead>
+      <tbody>${t1}<tr class="sum"><td colspan="13">합계</td><td class="n g0">${auN1(sum.days)}</td><td></td><td></td><td class="n">${auN1(sum.total)}</td><td class="n">${auN1(sum.ic)}</td><td class="n">${auN1(sum.icd)}</td><td></td><td></td></tr></tbody></table></div>
     <details class="au-more"><summary>담당이사 투입시간에 넣을 감사절차 (한 줄에 하나)</summary><textarea class="inp" id="auProcs" rows="3">${h(procs)}</textarea></details>
-    <div class="muted small">표준감사시간 · 담당이사 투입시간은 직접 고칠 수 있어요 (비우면 자료 값). 올린 자료는 이 PC에만 저장됩니다.</div></div>`;
+    <div class="muted small">표준감사시간 · 담당이사 투입시간은 직접 고칠 수 있어요 (비우면 자료 값). 올린 자료는 이 PC에만 저장됩니다.</div></div>`;  // 왼쪽 세 칸(순번·코드·회사명)은 옆으로 넘겨도 고정
+  const w0 = v.querySelector('th.st0')?.offsetWidth || 0;
+  const w1 = v.querySelector('th.st1')?.offsetWidth || 0;
+  v.querySelectorAll('.st1').forEach((e) => (e.style.left = `${w0}px`));
+  v.querySelectorAll('.st2').forEach((e) => (e.style.left = `${w0 + w1}px`));
 }
 function auSuggest() {
   const q = $('#auQ')?.value || '';
