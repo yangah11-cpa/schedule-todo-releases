@@ -3106,7 +3106,7 @@ function renderAuditTab() {
     .join('');
   const rows = A.projects.map((p) => computeAuditRow(p, A));
   const head = `<div class="tv-head"><span class="tv-title" style="cursor:default">감사시간</span>${chips}<span class="spacer"></span>
-      <button type="button" class="btn primary" data-aupaste title="회사 시스템 화면이나 엑셀에서 전체 선택(Ctrl+A) → 복사(Ctrl+C) 후 여기서 Ctrl+V">붙여넣기 (Ctrl+V)</button><button type="button" class="btn" data-auimport>엑셀 파일로</button></div>
+      <button type="button" class="btn primary" data-aupaste title="회사 시스템 화면이나 엑셀에서 전체 선택(Ctrl+A) → 복사(Ctrl+C) 후 여기서 Ctrl+V">붙여넣기 (Ctrl+V)</button><button type="button" class="btn" data-auimport>엑셀 파일로</button><button type="button" class="btn" data-auexport title="고른 프로젝트로 업무시간 입력 요청표(AuditHour 3~9행 모양)를 엑셀로 저장">엑셀로 내보내기</button></div>
     <div class="au-add"><input class="inp" id="auQ" placeholder="프로젝트 코드나 회사명으로 추가" autocomplete="off"><button type="button" class="btn" data-auadd>추가</button><div class="au-sug" id="auSug" hidden></div></div>`;
   if (!A.projects.length) {
     v.innerHTML = `<div class="tv-wrap">${head}<div class="tv-empty">회사 시스템의 <b>투입시간 · 담당이사 · 계약목록</b> 화면(또는 내려받은 엑셀)에서<br><b>Ctrl+A → Ctrl+C</b> 한 뒤, 이 탭에서 <b>Ctrl+V</b> 하세요. 셋 다 같은 방법으로 넣으면 됩니다.<br>그다음 보고 싶은 프로젝트 코드를 위 칸에서 추가하세요.<br><span class="muted small">머리글(계약번호 등)까지 함께 복사해야 어떤 자료인지 알아봅니다. 예전 AuditHour 시트를 복사해 붙이면 프로젝트 목록도 가져옵니다.</span></div></div>`;
@@ -3193,6 +3193,35 @@ async function importAudit() {
   if (bad.length) alertBox('일부 파일을 읽지 못했습니다', bad.join('\n'));
   if (done.length) toast(`업데이트: ${done.join(', ')}`);
 }
+/** 업무시간 입력 요청표 (엑셀 AuditHour 3~9행 모양): 프로젝트마다 한 열 */
+async function exportAudit() {
+  const A = auData();
+  if (!A.projects.length) return toast('먼저 프로젝트를 추가하세요.');
+  const rows = A.projects.map((p) => computeAuditRow(p, A));
+  const L = (t) => ({ v: t, s: 1 });
+  const col = (i) => {
+    let n = i + 1;
+    let out = '';
+    for (; n > 0; n = Math.floor((n - 1) / 26)) out = String.fromCharCode(65 + ((n - 1) % 26)) + out;
+    return out;
+  };
+  // 1행: 안내 문구, 2~8행: AuditHour 3~9행
+  const sheet = [
+    [{ v: '회계사님 다음 회사 업무시간 입력 부탁드립니다.', s: 3 }],
+    [L('회사명'), ...rows.map((r) => ({ v: r.co, s: 5 }))],
+    [L('프로젝트코드'), ...rows.map((r) => ({ v: r.code, s: 5 }))],
+    [L('보수'), ...rows.map((r) => ({ v: r.fee, s: 2 }))],
+    [L('입력시간'), ...rows.map((r, i) => ({ f: `${col(i + 1)}7-${col(i + 1)}6`, v: r.used, s: 2 }))],
+    [L('담당이사 추가입력시간'), ...rows.map(() => ({ v: 0, s: 4 }))],
+    [L('총 투입시간'), ...rows.map((r) => ({ v: r.used, s: 2 }))],
+    [L('시간당 보수'), ...rows.map((r) => ({ v: Math.round(r.perHour), s: 2 }))],
+  ];
+  const d = new Date();
+  const name = `업무시간요청_${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}.xlsx`;
+  const r = await window.api.audit.export({ sheet: '업무시간요청', cols: [22, ...rows.map(() => 24)], rows: sheet }, name);
+  if (!r.ok) return toast(`저장하지 못했습니다: ${r.error}`);
+  if (r.data) toast('엑셀로 저장했습니다.');
+}
 /** 표 하나를 알아보고 반영. 반영했으면 true */
 function auApplySheet(sheet, from, done) {
   const A = auData();
@@ -3239,6 +3268,7 @@ function bindAuditTab() {
   const v = $('#auditView');
   v.addEventListener('click', (e) => {
     if (e.target.closest('[data-auimport]')) return importAudit();
+    if (e.target.closest('[data-auexport]')) return exportAudit();
     if (e.target.closest('[data-aupaste]')) return window.api.clipText().then((t) => auPasteText(t));
     if (e.target.closest('[data-auadd]')) {
       const first = $('#auSug button');

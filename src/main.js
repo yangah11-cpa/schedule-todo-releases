@@ -271,6 +271,22 @@ app.whenReady().then(() => {
   // 감사시간 탭: 회사 시스템에서 받은 엑셀(투입시간·담당이사·계약목록) 읽기. 이 PC에만 보관
   ipcMain.handle('clip:text', () => clipboard.readText());
   ipcMain.handle(
+    'audit:export',
+    wrap(async (spec, defName) => {
+      const r = process.env.ST_EXPORT_FILE // 개발용 테스트 경로
+        ? { canceled: false, filePath: process.env.ST_EXPORT_FILE }
+        : await dialog.showSaveDialog(win, {
+        title: '엑셀로 내보내기',
+        defaultPath: path.join(app.getPath('documents'), defName || '감사시간.xlsx'),
+        filters: [{ name: '엑셀', extensions: ['xlsx'] }],
+      });
+      if (r.canceled || !r.filePath) return null;
+      fs.writeFileSync(r.filePath, require('./xlsxwrite').writeXlsx(spec));
+      if (!process.env.ST_EXPORT_FILE) shell.showItemInFolder(r.filePath);
+      return r.filePath;
+    })
+  );
+  ipcMain.handle(
     'audit:open',
     wrap(async () => {
       const r = process.env.ST_AUDIT_FILES
