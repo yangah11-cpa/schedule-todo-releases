@@ -580,3 +580,5 @@ tr.tv-me td { background: #FAF1EC; }
 .au-scroll .au-t .au-num.sm { width: 42px; }
 .au-scroll .au-t th, .au-scroll .au-t td { padding: 4px 5px; }
 .au-scroll .au-t .au-co { max-width: 160px; }
+.au-src.miss { background: #F7E4DF; color: #A2412F; }
+.tv-head { flex-wrap: wrap; }

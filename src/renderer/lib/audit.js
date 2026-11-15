@@ -35,6 +35,7 @@ export function detectSheet(sheet) {
   if (h) {
     const ci = { name: col(h.ks, '이름'), code: col(h.ks, '계약번호'), proc: col(h.ks, '감사절차'), hrs: col(h.ks, '합계', '결재시간') };
     const sums = {}; // 계약번호 → 이름 → 감사절차 → 시간
+    const byName = {}; // 이름 → 행 수
     let n = 0;
     for (const row of rows.slice(h.r + 1)) {
       const c = code(row?.[ci.code]);
@@ -42,9 +43,10 @@ export function detectSheet(sheet) {
       const nm = String(row[ci.name] ?? '').trim();
       const pr = String(row[ci.proc] ?? '').trim();
       ((sums[c] ||= {})[nm] ||= {})[pr] = ((sums[c][nm] || {})[pr] || 0) + num(row[ci.hrs]);
+      byName[nm] = (byName[nm] || 0) + 1;
       n++;
     }
-    return { kind: 'partner', count: n, data: sums };
+    return { kind: 'partner', count: n, data: sums, byName };
   }
   // 계약목록: 계약번호, 회사명, 계약종류, 감사보수, 담당이사
   h = findHeader(rows, ['계약번호', '회사명', '감사보수', '담당이사']);
@@ -192,4 +194,13 @@ export function parseClipboardTable(text) {
   }
   if (cur || row.length) row.push(cell(cur)), rows.push(row);
   return { name: '붙여넣기', rows };
+}
+
+/** 담당이사 자료 합치기: 이번에 붙인 사람(이름)의 자료만 바꾸고 다른 사람 자료는 그대로 */
+export function mergePartner(old, fresh, names) {
+  const out = {};
+  for (const [c, byName] of Object.entries(old || {}))
+    for (const [nm, v] of Object.entries(byName)) if (!names.includes(nm)) (out[c] ||= {})[nm] = v;
+  for (const [c, byName] of Object.entries(fresh || {})) for (const [nm, v] of Object.entries(byName)) (out[c] ||= {})[nm] = v;
+  return out;
 }

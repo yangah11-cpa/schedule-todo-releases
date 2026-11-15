@@ -4,7 +4,7 @@ import { expandEvent, nextOccurrence, firstOnOrAfter, describeRule, parseQuickAd
 import { getHolidays } from './lib/holidays.js';
 import { solarPayload, lunarTargets, lunarPayload, fromGoogle, timeRange, composeDescription } from './lib/gsync.js';
 import { parseTeamWorkbook, myEngagements, teamOn, sameClient } from './lib/team.js';
-import { detectSheet as detectAuditSheet, computeRow as computeAuditRow, searchContracts as searchAuditContracts, DEFAULT_PROCS as AUDIT_PROCS, parseClipboardTable } from './lib/audit.js';
+import { detectSheet as detectAuditSheet, computeRow as computeAuditRow, searchContracts as searchAuditContracts, DEFAULT_PROCS as AUDIT_PROCS, parseClipboardTable, mergePartner } from './lib/audit.js';
 import { summarize, companyOf, domainOf, CAT_LABEL } from './lib/mailsum.js';
 import { mailCandidates, stripQuoted, highlightHtml, parseShared, cleanSubject, setKeywords, extractWords, scoreWords, mergeKeywords, keywordsOf, BASE_KEYS } from './lib/mailparse.js';
 
@@ -3090,6 +3090,16 @@ function renderAuditTab() {
   const src = A.src || {};
   const chips = Object.entries(AU_KIND)
     .map(([k, label]) => {
+      if (k === 'partner' && A.partnerSrc && Object.keys(A.partnerSrc).length) {
+        const need = new Set(A.projects.map((p) => A.contracts?.[p.code]?.partner).filter(Boolean));
+        const names = [...new Set([...need, ...Object.keys(A.partnerSrc)])];
+        return names
+          .map((nm) => {
+            const x = A.partnerSrc[nm];
+            return `<span class="au-src ${x ? 'ok' : 'miss'}" title="${x ? h(`${nm} · ${auN0(x.count)}건 · ${new Date(x.at).toLocaleString('ko-KR')}`) : h(`${nm} 담당이사 자료를 아직 붙이지 않았습니다`)}">담당이사 ${h(nm)} ${x ? new Date(x.at).toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' }) : '없음'}</span>`;
+          })
+          .join('');
+      }
       const s = src[k];
       return `<span class="au-src ${s ? 'ok' : ''}" title="${s ? h(`${s.fileName} · ${new Date(s.at).toLocaleString('ko-KR')}`) : '아직 안 올림'}">${label} ${s ? `${auN0(s.count)}건 · ${new Date(s.at).toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' })}` : '없음'}</span>`;
     })
@@ -3196,6 +3206,14 @@ function auApplySheet(sheet, from, done) {
         n++;
       }
     done.push(n ? `프로젝트 ${n}개 추가` : '새 프로젝트 없음');
+  } else if (d.kind === 'partner') {
+    // 담당이사는 사람마다 따로 붙여넣음 → 붙인 사람 것만 교체
+    const names = Object.keys(d.byName);
+    A.partner = mergePartner(A.partner, d.data, names);
+    A.partnerSrc ||= {};
+    for (const nm of names) A.partnerSrc[nm] = { at: Date.now(), count: d.byName[nm], from };
+    (A.src ||= {}).partner = { fileName: from, at: Date.now(), count: Object.values(A.partnerSrc).reduce((t, x) => t + x.count, 0) };
+    done.push(`담당이사 ${names.join(', ')} (${auN0(d.count)}건)`);
   } else {
     A[d.kind] = d.data;
     (A.src ||= {})[d.kind] = { fileName: from, at: Date.now(), count: d.count };
