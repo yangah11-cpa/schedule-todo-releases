@@ -268,6 +268,28 @@ app.whenReady().then(() => {
       return { fileName: path.basename(r.filePaths[0]), sheets: readXlsx(fs.readFileSync(r.filePaths[0])) };
     })
   );
+  // 감사시간 탭: 회사 시스템에서 받은 엑셀(투입시간·담당이사·계약목록) 읽기. 이 PC에만 보관
+  ipcMain.handle(
+    'audit:open',
+    wrap(async () => {
+      const r = process.env.ST_AUDIT_FILES
+        ? { canceled: false, filePaths: process.env.ST_AUDIT_FILES.split('|') }
+        : await dialog.showOpenDialog(win, {
+            title: '투입시간 / 담당이사 / 계약목록 엑셀 선택 (여러 개 가능)',
+            filters: [{ name: '엑셀', extensions: ['xlsx', 'xlsm', 'xls', 'csv'] }],
+            properties: ['openFile', 'multiSelections'],
+          });
+      if (r.canceled || !r.filePaths.length) return null;
+      const { readSheetFile } = require('./sheetfile');
+      return r.filePaths.map((f) => {
+        try {
+          return { fileName: path.basename(f), sheets: readSheetFile(f) };
+        } catch (e) {
+          return { fileName: path.basename(f), error: e.message };
+        }
+      });
+    })
+  );
   ipcMain.handle('push:notify', wrap((msg) => pushHub.notify(msg)));
   ipcMain.handle('drive:save', wrap((name, text) => google.saveAppFile(name, text)));
   ipcMain.handle('drive:load', wrap((name) => google.loadAppFile(name)));

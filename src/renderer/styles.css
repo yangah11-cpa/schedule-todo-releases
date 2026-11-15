@@ -534,3 +534,26 @@ tr.tv-me td { background: #FAF1EC; }
 .tview tbody th, .tview tbody td { height: 58px; padding-top: 10px; padding-bottom: 10px; }
 .tview tbody th { font-size: 14px; vertical-align: middle; }
 .tview .tchip { min-height: 32px; }
+
+/* 감사시간 탭 */
+.au-src { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: var(--soft); color: var(--muted); white-space: nowrap; }
+.au-src.ok { background: #EEF2E6; color: #4E6A33; }
+.au-add { position: relative; display: flex; gap: 6px; max-width: 520px; }
+.au-add .inp { flex: 1; }
+.au-sug { position: absolute; top: 100%; left: 0; right: 70px; z-index: 20; margin-top: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 20px rgba(58, 50, 48, 0.12); padding: 4px; max-height: 320px; overflow: auto; }
+.au-sug button { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 7px 10px; border-radius: 7px; font: inherit; font-size: 13px; cursor: pointer; color: var(--ink); }
+.au-sug button:hover, .au-sug button:first-child { background: var(--soft); }
+.au-t { border-collapse: collapse; width: 100%; font-size: 13px; }
+.au-t th, .au-t td { border: 1px solid var(--line); padding: 6px 8px; vertical-align: middle; height: 40px; }
+.au-t thead th { background: #FCF9F6; font-weight: 600; white-space: nowrap; font-size: 12.5px; }
+.au-t td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.au-t td.c { text-align: center; }
+.au-t tr.sum td { background: #FCF9F6; font-weight: 600; }
+.au-plan { width: auto; min-width: 70%; }
+.au-num { width: 84px; text-align: right; padding: 4px 6px; font-variant-numeric: tabular-nums; }
+.au-warn { color: #B4483A; font-size: 11.5px; margin-top: 2px; }
+.au-hi { color: #B4483A; font-weight: 600; }
+.au-lo { background: #F7ECE6; }
+.au-more summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.au-more textarea { width: 100%; max-width: 520px; margin-top: 6px; font-size: 13px; }
+.au-num::-webkit-outer-spin-button, .au-num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }

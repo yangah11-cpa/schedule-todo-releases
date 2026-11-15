@@ -4,6 +4,7 @@ import { expandEvent, nextOccurrence, firstOnOrAfter, describeRule, parseQuickAd
 import { getHolidays } from './lib/holidays.js';
 import { solarPayload, lunarTargets, lunarPayload, fromGoogle, timeRange, composeDescription } from './lib/gsync.js';
 import { parseTeamWorkbook, myEngagements, teamOn, sameClient } from './lib/team.js';
+import { detectSheet as detectAuditSheet, computeRow as computeAuditRow, searchContracts as searchAuditContracts, DEFAULT_PROCS as AUDIT_PROCS } from './lib/audit.js';
 import { summarize, companyOf, domainOf, CAT_LABEL } from './lib/mailsum.js';
 import { mailCandidates, stripQuoted, highlightHtml, parseShared, cleanSubject, setKeywords, extractWords, scoreWords, mergeKeywords, keywordsOf, BASE_KEYS } from './lib/mailparse.js';
 
@@ -3074,6 +3075,178 @@ function bindTeamTab() {
     }
   });
 }
+/* ───────────── 감사시간 탭 (엑셀 AuditHour 11~34행) ───────────── */
+// 회사 시스템에서 받은 투입시간 / 담당이사 / 계약목록 엑셀을 올리면, 내가 고른 프로젝트 코드만 계산해서 보여 준다.
+// 자료는 이 PC에만 보관 (구글 드라이브·휴대폰으로 보내지 않음)
+const AU_KIND = { contracts: '계약목록', hours: '투입시간', partner: '담당이사' };
+const auData = () => (S.data.audit ||= { projects: [] });
+const auN0 = (v) => (Number.isFinite(v) ? Math.round(v).toLocaleString('ko-KR') : '');
+const auN1 = (v) => (Number.isFinite(v) ? (Math.round(v * 10) / 10).toLocaleString('ko-KR') : '');
+const auPct = (v) => (Number.isFinite(v) ? `${(v * 100).toFixed(1)}%` : '');
+const auNumIn = (i, f, v, ph = '') => `<input class="inp au-num" type="number" step="any" data-auf="${i}|${f}" value="${v ?? ''}" placeholder="${h(ph)}">`;
+function renderAuditTab() {
+  const v = $('#auditView');
+  const A = auData();
+  const src = A.src || {};
+  const chips = Object.entries(AU_KIND)
+    .map(([k, label]) => {
+      const s = src[k];
+      return `<span class="au-src ${s ? 'ok' : ''}" title="${s ? h(`${s.fileName} · ${new Date(s.at).toLocaleString('ko-KR')}`) : '아직 안 올림'}">${label} ${s ? `${auN0(s.count)}건 · ${new Date(s.at).toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' })}` : '없음'}</span>`;
+    })
+    .join('');
+  const rows = A.projects.map((p) => computeAuditRow(p, A));
+  const head = `<div class="tv-head"><span class="tv-title" style="cursor:default">감사시간</span>${chips}<span class="spacer"></span>
+      <button type="button" class="btn primary" data-auimport>엑셀 올리기</button></div>
+    <div class="au-add"><input class="inp" id="auQ" placeholder="프로젝트 코드나 회사명으로 추가" autocomplete="off"><button type="button" class="btn" data-auadd>추가</button><div class="au-sug" id="auSug" hidden></div></div>`;
+  if (!A.projects.length) {
+    v.innerHTML = `<div class="tv-wrap">${head}<div class="tv-empty">회사 시스템에서 받은 <b>투입시간 · 담당이사 · 계약목록</b> 엑셀을 올린 뒤<br>보고 싶은 프로젝트 코드를 위 칸에서 추가하세요.<br><span class="muted small">여러 파일을 한 번에 골라도 되고, 예전 AuditHour 엑셀을 올리면 프로젝트 목록도 같이 가져옵니다.</span></div></div>`;
+    return;
+  }
+  const t1 = rows
+    .map(
+      (r, i) => `<tr>
+      <td class="c">${i + 1}</td>
+      <td><b>${h(r.code)}</b>${r.missing.length ? `<div class="au-warn">${h(r.missing.join(', '))}에 없음</div>` : ''}</td>
+      <td>${h(r.co)}</td><td>${h(r.kind)}</td><td>${h(r.partner)}</td>
+      <td class="n">${auNumIn(i, 'std', A.projects[i].std, r.stdFromData ? auN0(r.std) : '')}</td>
+      <td class="n">${auN0(r.used)}</td><td class="n">${auN0(r.need)}</td><td class="n">${auN0(r.fee)}</td><td class="n">${auN0(r.perHour)}</td>
+      <td class="n ${r.ratio >= 1 ? 'au-hi' : ''}">${auPct(r.ratio)}</td>
+      <td class="n">${auNumIn(i, 'pHrs', A.projects[i].pHrs, auN1(r.partnerHrs))}</td>
+      <td class="n ${A.projects[i].pHrs == null && r.partnerRatio < 0.05 ? 'au-lo' : ''}">${auPct(A.projects[i].pHrs != null ? (r.used ? A.projects[i].pHrs / r.used : 0) : r.partnerRatio)}</td>
+      <td class="c"><button type="button" class="btn ghost icon" data-audel="${i}" aria-label="삭제" title="목록에서 빼기">✕</button></td></tr>`
+    )
+    .join('');
+  const sum = { days: 0, ic: 0, icd: 0 };
+  const t2 = rows
+    .map((r, i) => {
+      sum.days += r.days;
+      sum.ic += r.inCharge;
+      sum.icd += r.inChargeDays;
+      return `<tr><td>${h(r.co || r.code)}</td>
+        <td class="n">${auNumIn(i, 'days', A.projects[i].days, '0')}</td><td class="n">${auNumIn(i, 'people', A.projects[i].people, '0')}</td><td class="n">${auNumIn(i, 'hpd', A.projects[i].hpd, '13')}</td>
+        <td class="n">${auN1(r.total)}</td><td class="n">${auN0(r.need)}</td><td class="n">${auN1(r.inCharge)}</td><td class="n">${auN1(r.inChargeDays)}</td><td class="n">${auN1(r.perPerson)}</td></tr>`;
+    })
+    .join('');
+  const procs = (A.procs?.length ? A.procs : AUDIT_PROCS).join('\n');
+  v.innerHTML = `<div class="tv-wrap">${head}
+    <table class="au-t"><thead><tr><th>순번</th><th>프로젝트코드</th><th>회사명</th><th>계약종류</th><th>담당이사</th><th>표준감사시간</th><th>입력시간</th><th>필요시간</th><th>보수</th><th>시간당 보수</th><th>비율</th><th>담당이사 투입시간</th><th>투입시간 비율</th><th></th></tr></thead><tbody>${t1}</tbody></table>
+    <table class="au-t au-plan"><thead><tr><th>회사명</th><th>투입일수</th><th>투입인원</th><th>투입시간</th><th>총 투입시간</th><th>필요시간</th><th>인차지 투입시간</th><th>인차지 투입일수</th><th>인당 투입시간</th></tr></thead>
+      <tbody>${t2}<tr class="sum"><td>합계</td><td class="n">${auN1(sum.days)}</td><td></td><td></td><td></td><td></td><td class="n">${auN1(sum.ic)}</td><td class="n">${auN1(sum.icd)}</td><td></td></tr></tbody></table>
+    <details class="au-more"><summary>담당이사 투입시간에 넣을 감사절차 (한 줄에 하나)</summary><textarea class="inp" id="auProcs" rows="3">${h(procs)}</textarea></details>
+    <div class="muted small">표준감사시간 · 담당이사 투입시간은 직접 고칠 수 있어요 (비우면 자료 값). 올린 자료는 이 PC에만 저장됩니다.</div></div>`;
+}
+function auSuggest() {
+  const q = $('#auQ')?.value || '';
+  const box = $('#auSug');
+  if (!box) return;
+  const have = new Set(auData().projects.map((p) => p.code));
+  const list = searchAuditContracts(auData(), q).filter((x) => !have.has(x.code));
+  box.hidden = !list.length;
+  box.innerHTML = list.map((x) => `<button type="button" data-aupick="${h(x.code)}"><b>${h(x.code)}</b> ${h(x.co)}</button>`).join('');
+}
+function auAdd(c) {
+  c = String(c || '').trim();
+  if (!c) return;
+  const A = auData();
+  if (A.projects.some((p) => p.code === c)) return toast('이미 목록에 있습니다.');
+  if (A.contracts && !A.contracts[c] && !(A.hours && A.hours[c])) {
+    const m = searchAuditContracts(A, c, 2);
+    if (m.length === 1) c = m[0].code;
+    else if (!/^\d{2}-\d{4}-\d{2}-\d{4}$/.test(c)) return toast('올린 자료에서 찾지 못했습니다. 프로젝트 코드를 정확히 넣어 주세요.');
+  }
+  A.projects.push({ code: c, days: 0, people: 0, hpd: 13 });
+  save();
+  renderAuditTab();
+  $('#auQ')?.focus();
+}
+async function importAudit() {
+  const r = await window.api.audit.open();
+  if (!r.ok) return toast(`엑셀을 읽지 못했습니다: ${r.error}`);
+  if (!r.data) return;
+  const A = auData();
+  const done = [];
+  const bad = [];
+  for (const f of r.data) {
+    if (f.error) {
+      bad.push(`${f.fileName}: ${f.error}`);
+      continue;
+    }
+    let found = false;
+    for (const s of f.sheets || []) {
+      const d = detectAuditSheet(s);
+      if (!d) continue;
+      found = true;
+      if (d.kind === 'projects') {
+        let n = 0;
+        for (const p of d.data)
+          if (!A.projects.some((x) => x.code === p.code)) {
+            A.projects.push({ code: p.code, std: p.std || null, days: p.days ?? 0, people: p.people ?? 0, hpd: p.hpd || 13 });
+            n++;
+          }
+        if (n) done.push(`프로젝트 ${n}개`);
+      } else {
+        A[d.kind] = d.data;
+        (A.src ||= {})[d.kind] = { fileName: f.fileName, at: Date.now(), count: d.count };
+        done.push(`${AU_KIND[d.kind]} ${auN0(d.count)}건`);
+      }
+    }
+    if (!found) bad.push(`${f.fileName}: 투입시간 · 담당이사 · 계약목록 표를 찾지 못했습니다 (머리글 확인)`);
+  }
+  save();
+  renderAuditTab();
+  if (bad.length) alertBox('일부 파일을 읽지 못했습니다', bad.join('\n'));
+  if (done.length) toast(`업데이트: ${done.join(', ')}`);
+}
+function alertBox(title, msg) {
+  const { el, close } = openModal(`<div class="mhead"><h1>${h(title)}</h1><button type="button" class="btn ghost icon" data-close aria-label="닫기">✕</button></div><div class="mbody" style="padding:14px 18px;white-space:pre-wrap;line-height:1.7">${h(msg)}</div>`);
+  el.addEventListener('click', (e) => e.target.closest('[data-close]') && close());
+}
+function bindAuditTab() {
+  const v = $('#auditView');
+  v.addEventListener('click', (e) => {
+    if (e.target.closest('[data-auimport]')) return importAudit();
+    if (e.target.closest('[data-auadd]')) {
+      const first = $('#auSug button');
+      return auAdd(first && !$('#auSug').hidden ? first.dataset.aupick : $('#auQ').value);
+    }
+    const pk = e.target.closest('[data-aupick]');
+    if (pk) return auAdd(pk.dataset.aupick);
+    const del = e.target.closest('[data-audel]');
+    if (del) {
+      auData().projects.splice(+del.dataset.audel, 1);
+      save();
+      return renderAuditTab();
+    }
+  });
+  v.addEventListener('input', (e) => {
+    if (e.target.id === 'auQ') auSuggest();
+  });
+  v.addEventListener('keydown', (e) => {
+    if (e.target.id === 'auQ' && e.key === 'Enter') {
+      e.preventDefault();
+      const first = $('#auSug button');
+      auAdd(first && !$('#auSug').hidden ? first.dataset.aupick : e.target.value);
+    }
+  });
+  v.addEventListener('change', (e) => {
+    const t = e.target;
+    if (t.id === 'auProcs') {
+      auData().procs = t.value.split('\n').map((x) => x.trim()).filter(Boolean);
+      save();
+      return renderAuditTab();
+    }
+    if (!t.dataset.auf) return;
+    const [i, f] = t.dataset.auf.split('|');
+    const p = auData().projects[+i];
+    if (!p) return;
+    const val = t.value.trim();
+    if (f === 'std' || f === 'pHrs') p[f] = val === '' ? null : Number(val);
+    else p[f] = val === '' ? (f === 'hpd' ? 13 : 0) : Number(val);
+    save();
+    renderAuditTab();
+  });
+}
+
 function openTeamView(date) {
   if (!S.data.team?.parsed) {
     toast('먼저 위쪽 "팀 일정" 탭으로 팀 일정표 엑셀을 가져오세요.');
@@ -3477,6 +3650,7 @@ async function init() {
   window.api.clip?.onPick?.((d) => openClipChooser(d));
   bindMailView();
   bindTeamTab();
+  bindAuditTab();
   document.getElementById('aiMeter')?.addEventListener('click', () => openSettings('ai'));
   setTimeout(() => renderAiMeter(), 1500);
   window.api.calls?.onProgress?.((p) => {
@@ -4524,7 +4698,9 @@ function setAppTab(t) {
   $('main.main').hidden = t !== 'main';
   $('#mailView').hidden = t !== 'mail';
   $('#teamView').hidden = t !== 'team';
+  $('#auditView').hidden = t !== 'audit';
   if (t === 'team') renderTeamTab();
+  else if (t === 'audit') renderAuditTab();
   else if (t === 'mail') {
     renderMailView();
     // 처음 열거나 10분 넘게 지났으면 새로 읽기
