@@ -585,3 +585,12 @@ tr.tv-me td { background: #FAF1EC; }
 .tchip.added { border: 1px dashed #B9735A; background: #FBF3EE; }
 .mv-item.personal { opacity: 0.55; }
 .mv-cat.c-personal { background: #ECE7E2; color: #7A6F68; }
+.mv-hist { margin-bottom: 12px; }
+.mv-hist .mv-th-l { max-height: 300px; }
+.mv-th-call { align-self: center; width: 88%; background: #F7EEF1; border: 1px solid #E6D3DA; border-radius: 10px; padding: 7px 12px; font-size: 13px; margin: 2px 0; }
+.mv-th-call.cur { box-shadow: 0 0 0 2px #D9A893; }
+.mv-th-ch { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #9A6478; font-weight: 600; }
+.mv-th-ch svg { width: 13px; height: 13px; }
+.mv-th-call .g, .mv-th-call summary { margin-top: 3px; line-height: 1.5; color: var(--ink); }
+.mv-th-call summary { cursor: pointer; }
+.mv-th-call .b { margin-top: 6px; white-space: pre-wrap; line-height: 1.6; color: var(--muted); max-height: 220px; overflow: auto; }

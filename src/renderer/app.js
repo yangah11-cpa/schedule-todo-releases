@@ -5016,6 +5016,11 @@ function renderMailView() {
         <button type="button" class="btn" data-mvwork title="${x.work.biz ? '개인 연락·광고 등이면 목록에서 숨김' : '업무 목록에 다시 표시'}${x.work.by === 'ai' ? ' (지금은 AI 판단)' : ''}">${x.work.biz ? '비업무로' : '업무로'}</button>
         <button type="button" class="btn ${x.done ? '' : 'primary'}" data-mvdone>${x.done ? '완료 취소' : '✓ 완료'}</button></div>
       <div class="mv-scroll">
+      ${
+        x.mail.source === 'sms' || x.mail.source === 'call'
+          ? `<div class="mv-thread mv-hist" id="mv-thread" data-tid="${h(x.mail.id)}" data-num="${h(x.mail.fromAddr || '')}" data-who="${h(x.mail.from || '')}"><div class="mv-th-h">같은 번호 기록 · ${h(x.mail.from || '')}</div><div class="muted small" style="padding:10px">불러오는 중…</div></div>`
+          : ''
+      }
       <div class="mv-sum">
         <div><h4>${x.mail.source === 'sms' ? '최근 문자 요지' : x.mail.source === 'call' ? '통화 요지' : '요지'}${x.sum.ai ? ' <span class="mv-aitag">AI</span>' : aiState().on && aiRes.get(x.mail.id)?.err ? ` <span class="mv-aierr">AI 실패: ${h(aiRes.get(x.mail.id).err)}</span> <button type="button" class="linkbtn" data-airetry>다시 시도</button>` : ''}</h4><div class="mv-gist">${h(x.sum.gist || '(본문 없음)')}</div></div>
         ${x.sum.requests.length ? `<div><h4>요청 사항</h4><ul>${x.sum.requests.map((r) => `<li>${h(r)}</li>`).join('')}</ul></div>` : ''}
@@ -5032,7 +5037,6 @@ function renderMailView() {
         ${x.sum.atts.length ? `<div><h4>첨부</h4><div class="mv-att">${x.sum.atts.map((n) => `<span>📎 ${h(n)}${readAtts.has(n) ? ' · 읽음' : ''}</span>`).join('')}</div></div>` : ''}
       </div>
       ${x.mail.source === 'call' && !x.mail.pending ? (callState().diar && x.mail.lines?.some((l) => l.spk != null) ? callBubbles(x.mail) : callParas(x.mail, hits)) : ''}
-      ${x.mail.source === 'sms' ? `<div class="mv-thread" id="mv-thread" data-tid="${h(x.mail.id)}"><div class="mv-th-h">대화 기록 · ${h(x.mail.from || '')}</div><div class="muted small" style="padding:10px">불러오는 중…</div></div>` : ''}
       <details class="mv-orig" ${x.mail.source === 'call' ? 'hidden' : ''} ${x.mail.source === 'sms' ? '' : 'open'}><summary>원문</summary><div>${highlightHtml((mb?.body || stripQuoted(x.mail.body || '')).slice(0, 6000), hits, h)}</div>${[].concat(x.mail.attText || [])
         .map((a) => `<div class="mv-attt">📎 ${h(a.name)}</div><div>${highlightHtml(a.text.slice(0, 3000), hits, h)}</div>`)
         .join('')}</details>
@@ -5462,23 +5466,33 @@ function openClipChooser({ text = '', app = '', copied = false } = {}) {
   });
 }
 
-/* 같은 번호와 주고받은 문자 기록 (휴대폰과 연결 앱처럼) */
+/* 같은 번호와 주고받은 문자 + 통화 녹음을 시간순으로 (상세 화면 맨 위) */
 const threadCache = new Map();
 async function loadThread(el) {
   const id = el.dataset.tid;
-  let msgs = threadCache.get(id);
+  const num = el.dataset.num || '';
+  const who = el.dataset.who || '';
+  const k = phoneKey(num);
+  const ck = k.length >= 7 ? `n:${k}` : `i:${id}`;
+  let msgs = threadCache.get(ck);
   if (!msgs) {
-    const r = await window.api.phone.thread({ id, limit: 80 });
+    const r = await window.api.phone.thread(k.length >= 7 ? { num, limit: 120 } : { id, limit: 120 });
     const res = r.ok ? r.data : { ok: false };
-    if (!res.ok) {
-      if (el.isConnected) el.querySelector('.muted').textContent = '대화 기록을 불러오지 못했습니다.';
-      return;
-    }
-    msgs = res.messages;
-    threadCache.set(id, msgs);
-    setTimeout(() => threadCache.delete(id), 60000);
+    msgs = res.ok ? res.messages : [];
+    threadCache.set(ck, msgs);
+    setTimeout(() => threadCache.delete(ck), 60000);
   }
   if (!el.isConnected || el.dataset.tid !== id) return;
+  // 같은 번호 통화 녹음
+  const calls = k.length >= 7 ? (S.callList || []).filter((c) => phoneKey(c.fromAddr) === k) : [];
+  const items = [
+    ...msgs.map((m) => ({ ...m, kind: 'sms' })),
+    ...calls.map((c) => ({ kind: 'call', id: c.id, at: (c.received || '').slice(0, 19), pending: c.pending, gist: sumCache.get(c.id)?.sum?.gist || '', body: c.body || '' })),
+  ].sort((a, b) => a.at.localeCompare(b.at));
+  if (items.length <= 1 && (items[0]?.id === id || !items.length)) {
+    el.remove(); // 이 번호의 다른 기록이 없으면 숨김
+    return;
+  }
   const t = D.today();
   const dayLabel = (d) => (d === t ? '오늘' : d === D.addDays(t, -1) ? '어제' : `${+d.slice(5, 7)}월 ${+d.slice(8, 10)}일 (${'일월화수목금토'[D.dow(d)]})`);
   const tm = (at) => {
@@ -5487,19 +5501,31 @@ async function loadThread(el) {
   };
   let last = '';
   let prevMin = '';
-  const html = msgs
+  const html = items
     .map((m) => {
       const d = m.at.slice(0, 10);
       const sep = d !== last ? `<div class="mv-th-day">${h(dayLabel(d))}</div>` : '';
       last = d;
+      if (m.kind === 'call') {
+        prevMin = '';
+        const cur = m.id === id;
+        const gist = m.pending ? '아직 글로 바꾸지 않음' : m.gist || m.body.slice(0, 80);
+        return `${sep}<div class="mv-th-call ${cur ? 'cur' : ''}"><div class="mv-th-ch">${srcIcon('call')}통화 ${h(tm(m.at))}${cur ? ' <span class="muted">· 지금 보는 통화</span>' : ''}</div>${
+          cur || m.pending ? `<div class="g">${h(gist)}</div>` : `<details><summary>${h(gist)}</summary><div class="b">${h(m.body)}</div></details>`
+        }</div>`;
+      }
       const min = `${m.sent}|${m.at.slice(0, 16)}`;
-      const head = min !== prevMin ? `<div class="mv-th-t">${m.sent ? '' : `${h(el.querySelector('.mv-th-h').textContent.replace(/^대화 기록 · /, ''))} `}${h(tm(m.at))}</div>` : '';
+      const head = min !== prevMin ? `<div class="mv-th-t">${m.sent ? '' : `${h(who)} `}${h(tm(m.at))}</div>` : '';
       prevMin = min;
       return `${sep}<div class="mv-th-m ${m.sent ? 'me' : ''} ${m.id === id ? 'cur' : ''}">${head}<div class="b">${h(m.body)}</div></div>`;
     })
     .join('');
-  el.innerHTML = `<div class="mv-th-h">${el.querySelector('.mv-th-h').innerHTML} <span class="muted">· ${msgs.length}건</span></div><div class="mv-th-l">${html || '<div class="muted small">기록이 없습니다.</div>'}</div>`;
+  const nC = items.filter((m) => m.kind === 'call').length;
+  const nS = items.length - nC;
+  el.innerHTML = `<div class="mv-th-h">같은 번호 기록 · ${h(who)} <span class="muted">· ${[nS ? `문자 ${nS}` : '', nC ? `통화 ${nC}` : ''].filter(Boolean).join(' · ')}</span></div><div class="mv-th-l">${html}</div>`;
+  // 지금 보는 문자·통화가 보이도록 (없으면 맨 아래 = 최근)
   const l = el.querySelector('.mv-th-l');
-  l.scrollTop = l.scrollHeight;
+  const cur = l.querySelector('.cur');
+  l.scrollTop = cur ? cur.offsetTop - l.offsetTop - l.clientHeight + cur.offsetHeight + 24 : l.scrollHeight;
 }
 

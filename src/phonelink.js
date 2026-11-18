@@ -137,25 +137,41 @@ function readMessages({ days = 3 } = {}) {
  * 한 대화방(같은 번호)의 문자 기록 — 받은 것과 보낸 것 모두, 최근 순 최대 limit개
  * @param {string} id 목록의 문자 id ("sms:123" / "mms:10")
  */
-function readThread({ id, limit = 80 } = {}) {
+function readThread({ id, num, limit = 80 } = {}) {
   const src = dbDir();
   if (!src || !fs.existsSync(path.join(src, 'phone.db'))) return { ok: false, code: 'noPhoneLink' };
   const { DatabaseSync } = require('node:sqlite');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'st-phone-'));
   try {
     const db = new DatabaseSync(copyDb(src, 'phone.db', tmp));
-    const [kind, num] = String(id).split(':');
-    const row = db.prepare(`SELECT thread_id t FROM ${kind === 'mms' ? 'mms' : 'message'} WHERE message_id = ?`).get(Number(num));
-    if (!row) return { ok: true, messages: [] };
+    // 대화방 찾기: 문자 id로, 또는 번호로 (통화 화면에서 같은 번호 문자 보기)
+    let threads = [];
+    if (id) {
+      const [kind, mid] = String(id).split(':');
+      const row = db.prepare(`SELECT thread_id t FROM ${kind === 'mms' ? 'mms' : 'message'} WHERE message_id = ?`).get(Number(mid));
+      if (row) threads = [row.t];
+    } else if (num && key(num).length >= 7) {
+      const k = key(num);
+      const rows = [
+        ...db.prepare('SELECT DISTINCT thread_id t, from_address a FROM message WHERE from_address IS NOT NULL').all(),
+        ...db.prepare('SELECT DISTINCT thread_id t, from_address a FROM mms WHERE from_address IS NOT NULL').all(),
+      ];
+      threads = [...new Set(rows.filter((r) => key(r.a) === k).map((r) => r.t))];
+    }
+    if (!threads.length) {
+      db.close();
+      return { ok: true, messages: [] };
+    }
     const MS = '(timestamp / 10000 - 11644473600000)';
-    const sms = db.prepare(`SELECT message_id id, type, body, ${MS} ms FROM message WHERE thread_id = ? ORDER BY timestamp DESC LIMIT ?`).all(row.t, limit);
+    const qs = threads.map(() => '?').join(',');
+    const sms = db.prepare(`SELECT message_id id, type, body, ${MS} ms FROM message WHERE thread_id IN (${qs}) ORDER BY timestamp DESC LIMIT ?`).all(...threads, limit);
     const mms = db
       .prepare(
         `SELECT m.message_id id, m.type type, m.subject subject, (m.timestamp / 10000 - 11644473600000) ms,
                 (SELECT group_concat(p.text, char(10)) FROM mms_part p WHERE p.message_id = m.message_id AND p.content_type = 'text/plain') body
-           FROM mms m WHERE m.thread_id = ? ORDER BY m.timestamp DESC LIMIT ?`
+           FROM mms m WHERE m.thread_id IN (${qs}) ORDER BY m.timestamp DESC LIMIT ?`
       )
-      .all(row.t, limit);
+      .all(...threads, limit);
     db.close();
     const pad = (n) => String(n).padStart(2, '0');
     const iso = (ms) => {
