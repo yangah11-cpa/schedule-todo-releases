@@ -607,3 +607,7 @@ tr.tv-me td { background: #FAF1EC; }
 .mv-calllog { position: relative; max-height: 560px; overflow-y: auto; padding-bottom: 6px; }
 .mv-callsep { margin: 10px 14px 2px; padding: 4px 10px; font-size: 12px; font-weight: 600; color: #9A6478; background: #F7EEF1; border-radius: 6px; }
 .mv-callsep.cur { background: #F1DDE4; color: #7A3F55; }
+/* 통화 상세: 통화 내용 칸이 남은 높이를 채우고 그 안에서만 스크롤 (스크롤바 두 개 안 생기게) */
+.mv-scroll > * { flex-shrink: 0; }
+.mv-scroll > .mv-call { flex: 1 1 0; min-height: 260px; display: flex; flex-direction: column; }
+.mv-scroll > .mv-call > .mv-paras, .mv-scroll > .mv-call > .mv-calllog, .mv-scroll > .mv-call > .mv-th-l { flex: 1; min-height: 0; max-height: none; overflow-y: auto; }
