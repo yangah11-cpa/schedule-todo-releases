@@ -1293,7 +1293,7 @@ function openEventDialog({ ev = null, g = null, date = null, occ = null, preset 
         <div class="chipsbox" id="e-chips">${f.people
           .map((p, i) => `<span class="person">${h(p)}${readonly ? '' : `<button type="button" data-rmp="${i}" aria-label="${h(p)} 삭제">×</button>`}</span>`)
           .join('')}${readonly ? '' : '<input id="e-people" list="dl-people" placeholder="이름 입력 후 Enter">'}</div>
-        <datalist id="dl-people">${knownPeople().filter((p) => !f.people.includes(p)).map((p) => `<option value="${h(p)}"></option>`).join('')}</datalist>
+        <datalist id="dl-people">${teamNames().size ? '<option value="팀 전체"></option>' : ''}${knownPeople().filter((p) => !f.people.includes(p)).map((p) => `<option value="${h(p)}"></option>`).join('')}</datalist>
         ${f.calendarId !== 'local' ? '<span class="note">장소와 참여 인원은 Google 일정의 설명란에 함께 기록됩니다 (초대는 보내지 않음).</span>' : ''}
       </div>
       ${
@@ -1346,8 +1346,16 @@ function openEventDialog({ ev = null, g = null, date = null, occ = null, preset 
   const addPerson = () => {
     const inp = $('#e-people', form);
     if (!inp) return;
-    const names = inp.value.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
-    if (!names.length) return;
+    // "팀 전체"(팀원 전체, 팀전체)는 팀 일정표의 팀원 모두로 바꿔 넣음
+    const names = inp.value
+      .split(/[,，]/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .flatMap((n) => (/^팀\s*(원\s*)?전체$/.test(n) ? (teamNames().size ? [...teamNames()] : (toast('팀 일정표를 먼저 가져오세요.'), [])) : [n]));
+    if (!names.length) {
+      inp.value = '';
+      return;
+    }
     f.people.push(...names.filter((n) => !f.people.includes(n)));
     auto.peopleTouched = true;
     auto.filledPeople = false;
@@ -1566,7 +1574,9 @@ function saveLocalEvent(existing, f) {
   const i = S.data.events.findIndex((x) => x.id === ev.id);
   if (i >= 0) S.data.events[i] = ev;
   else S.data.events.push(ev);
+  const toTeam = syncTeamAdds(`e:${ev.id}`, ev);
   save();
+  if (toTeam.length) toast(`팀 일정에도 넣었습니다: ${toTeam.join(', ')}`);
   renderAll();
   if (ev.calendarId !== 'local' || settings().pendingDeletes.length) {
     (async () => {
@@ -1601,6 +1611,7 @@ async function deleteLocalEvent(ev, occ) {
     return true;
   }
   S.data.events = S.data.events.filter((x) => x.id !== ev.id);
+  syncTeamAdds(`e:${ev.id}`, null);
   save();
   renderAll();
   if (ev.calendarId !== 'local') {
@@ -1623,6 +1634,11 @@ async function saveExternal(g, f) {
   } catch (e) {
     return `Google 저장 실패: ${e.message}`;
   }
+  if (!g.recurringEventId) {
+    const toTeam = syncTeamAdds(`g:${g.gid}`, { title: f.title.trim(), date: f.date, endDate: f.endDate, people: f.people });
+    save();
+    if (toTeam.length) toast(`팀 일정에도 넣었습니다: ${toTeam.join(', ')}`);
+  }
   await refreshGoogle();
   return null;
 }
@@ -1644,6 +1660,10 @@ async function deleteExternal(g) {
   } catch (e) {
     toast(`삭제 실패: ${e.message}`);
     return false;
+  }
+  if (!g.recurringEventId) {
+    syncTeamAdds(`g:${g.gid}`, null);
+    save();
   }
   await refreshGoogle();
   return true;
@@ -2717,7 +2737,7 @@ async function importTeam() {
   if (!r.data) return;
   let parsed;
   try {
-    parsed = applyTeamEdits(parseTeamWorkbook(r.data.sheets));
+    parsed = applyTeamEdits(applyTeamAdds(parseTeamWorkbook(r.data.sheets)));
   } catch (e) {
     return toast(e.message);
   }
@@ -3015,7 +3035,7 @@ function teamTableHtml(cur, selDate) {
     let html = '';
     let i = 0;
     const chip = (g) =>
-      `<button type="button" class="tchip${g.it.lead ? ' lead' : ''}${g.cont ? ' cont' : ''}${g.more ? ' more' : ''}${g.it.orig ? ' edited' : ''}" data-tedit="${g.pi}|${h(name)}|${g.ei}" title="${h(g.it.text)}${g.it.work ? ` · ${h(g.it.work)}` : ''} ${h(D.shortLabel(g.it.start))} ~ ${h(D.shortLabel(g.it.end))}${g.it.lead ? ' · 인차지' : ''} — 눌러서 회사 이름·업무 내용 수정">${h(g.it.text)}${g.it.orig ? '<i class="ed">✎</i>' : ''}${g.it.work ? `<small>${h(g.it.work)}</small>` : ''}</button>`;
+      `<button type="button" class="tchip${g.it.lead ? ' lead' : ''}${g.it.added ? ' added' : ''}${g.cont ? ' cont' : ''}${g.more ? ' more' : ''}${g.it.orig ? ' edited' : ''}" data-tedit="${g.pi}|${h(name)}|${g.ei}" title="${h(g.it.text)}${g.it.work ? ` · ${h(g.it.work)}` : ''} ${h(D.shortLabel(g.it.start))} ~ ${h(D.shortLabel(g.it.end))}${g.it.lead ? ' · 인차지' : ''}${g.it.added ? ' · 일정 탭에서 추가됨' : ''} — 눌러서 회사 이름·업무 내용 수정">${h(g.it.text)}${g.it.orig ? '<i class="ed">✎</i>' : ''}${g.it.work ? `<small>${h(g.it.work)}</small>` : ''}</button>`;
     for (let k = 0; k < segs.length; k++) {
       const g = segs[k];
       if (g.i < i) continue; // 겹치는 일정은 앞 칸에 함께 표시됨
@@ -3350,6 +3370,62 @@ function openTeamView(date) {
 
 /* 팀 일정표 항목 수정 (회사 이름·업무 내용). 원문 기준으로 기억해 두었다가 다시 가져와도 그대로 적용 */
 const teamEditKey = (name, orig, start) => `${name}|${orig}|${start}`;
+/* ───── 일정 탭 참여자 → 팀 일정에 추가 ─────
+   일정의 참여 인원 중 팀원이 있으면 그 팀원의 팀 일정에도 넣는다.
+   그 날짜에 같은 회사 일정이 이미 있으면 넣지 않음. 엑셀을 다시 가져와도 유지되도록 따로 보관(S.data.teamAdds). */
+function teamNames() {
+  return new Set((S.data.team?.parsed || []).flatMap((p) => p.people.map((x) => x.name)));
+}
+/** 제목 → 팀 일정에 쓸 회사 이름 / 업무 ("월드와이드브랜즈 기말감사" → 회사·업무) */
+function splitTitle(title) {
+  const t = String(title || '').replace(/^\s*[\[(][^\])]*[\])]\s*/, '').trim();
+  // 끝이 업무 이름(기말감사, 재고실사, 검토, 미팅 등)일 때만 회사 / 업무로 나눔. "팀 워크숍" 같은 건 그대로
+  const w = t.split(/\s+/);
+  if (w.length < 2 || !/(감사|실사|검토|입회|조사|평가|미팅|회의|방문|인터뷰|보고|업무)$/.test(w[w.length - 1])) return { text: t, work: '' };
+  // "중간 감사"처럼 마지막 말이 짧으면 앞말까지 업무로
+  const n = w[w.length - 1].length <= 2 && w.length >= 3 ? 2 : 1;
+  return { text: w.slice(0, -n).join(' ').replace(/^주식회사\s+|\s+주식회사$/g, ''), work: w.slice(-n).join(' ') };
+}
+/** 엑셀에서 가져온 팀 일정에 '일정 탭에서 넣은 것'을 다시 끼워 넣음 */
+function applyTeamAdds(parsed) {
+  for (const p of parsed) for (const person of p.people) person.entries = person.entries.filter((e) => !e.added);
+  for (const a of S.data.teamAdds || []) {
+    const sheet = parsed.find((p) => a.start <= p.to && a.end >= p.from && p.people.some((x) => x.name === a.name)) || parsed.find((p) => p.people.some((x) => x.name === a.name));
+    const person = sheet?.people.find((x) => x.name === a.name);
+    if (person) person.entries.push({ raw: a.text, text: a.text, work: a.work || '', lead: false, start: a.start, end: a.end, added: a.key });
+  }
+  return parsed;
+}
+/** 일정 하나(key)에 맞춰 팀 일정 추가분을 다시 계산. 반환: 새로 넣은 사람 이름 */
+function syncTeamAdds(key, ev) {
+  const team = S.data.team?.parsed;
+  const before = (S.data.teamAdds || []).filter((a) => a.key === key);
+  S.data.teamAdds = (S.data.teamAdds || []).filter((a) => a.key !== key);
+  const added = [];
+  if (team && ev && !ev.team && (!ev.repeat || ev.repeat === 'none')) {
+    const names = teamNames();
+    const start = ev.date;
+    const end = ev.endDate && ev.endDate > ev.date ? ev.endDate : ev.date;
+    const { text, work } = splitTitle(ev.title);
+    for (const name of new Set(ev.people || [])) {
+      if (!names.has(name) || !text) continue;
+      // 그 기간에 같은 회사 일정이 이미 있으면 넣지 않음 (다른 회사 일정만 있으면 함께 넣음)
+      const has = team.some((p) =>
+        p.people.some((x) => x.name === name && x.entries.some((e) => !e.added && e.start <= end && e.end >= start && (sameClient(e.text, text) || sameClient(e.orig || e.text, ev.title))))
+      );
+      if (has) continue;
+      S.data.teamAdds.push({ key, name, text, work, start, end, at: Date.now() });
+      if (!before.some((b) => b.name === name)) added.push(name);
+    }
+  }
+  const changed = JSON.stringify(before.map((a) => [a.name, a.text, a.start, a.end])) !== JSON.stringify(S.data.teamAdds.filter((a) => a.key === key).map((a) => [a.name, a.text, a.start, a.end]));
+  if (changed && team) {
+    applyTeamEdits(applyTeamAdds(team));
+    S.data.team.uploadedAt = null;
+    if (S.g.connected && S.g.drive) uploadTeamForPhone(false, true);
+  }
+  return added;
+}
 function applyTeamEdits(parsed) {
   const ed = S.data.teamEdits || {};
   for (const p of parsed)
