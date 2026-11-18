@@ -604,3 +604,6 @@ tr.tv-me td { background: #FAF1EC; }
 .mv-hbox[data-src="sms"] > .mv-th-h svg { color: #6F8A4A; }
 .mv-hbox[data-src="call"] > .mv-th-h svg { color: #9A6478; }
 .mv-hbox .mv-th-l { max-height: 260px; }
+.mv-calllog { position: relative; max-height: 560px; overflow-y: auto; padding-bottom: 6px; }
+.mv-callsep { margin: 10px 14px 2px; padding: 4px 10px; font-size: 12px; font-weight: 600; color: #9A6478; background: #F7EEF1; border-radius: 6px; }
+.mv-callsep.cur { background: #F1DDE4; color: #7A3F55; }

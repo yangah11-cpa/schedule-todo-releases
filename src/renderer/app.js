@@ -5016,11 +5016,6 @@ function renderMailView() {
         <button type="button" class="btn" data-mvwork title="${x.work.biz ? '개인 연락·광고 등이면 목록에서 숨김' : '업무 목록에 다시 표시'}${x.work.by === 'ai' ? ' (지금은 AI 판단)' : ''}">${x.work.biz ? '비업무로' : '업무로'}</button>
         <button type="button" class="btn ${x.done ? '' : 'primary'}" data-mvdone>${x.done ? '완료 취소' : '✓ 완료'}</button></div>
       <div class="mv-scroll">
-      ${
-        x.mail.source === 'call'
-          ? `<div class="mv-hist" id="mv-thread" data-tid="${h(x.mail.id)}" data-num="${h(x.mail.fromAddr || '')}" data-who="${h(x.mail.from || '')}"><div class="mv-th-h">같은 번호 기록 · ${h(x.mail.from || '')}</div><div class="muted small" style="padding:10px">불러오는 중…</div></div>`
-          : ''
-      }
       <div class="mv-sum">
         <div><h4>${x.mail.source === 'sms' ? '최근 문자 요지' : x.mail.source === 'call' ? '통화 요지' : '요지'}${x.sum.ai ? ' <span class="mv-aitag">AI</span>' : aiState().on && aiRes.get(x.mail.id)?.err ? ` <span class="mv-aierr">AI 실패: ${h(aiRes.get(x.mail.id).err)}</span> <button type="button" class="linkbtn" data-airetry>다시 시도</button>` : ''}</h4><div class="mv-gist">${h(x.sum.gist || '(본문 없음)')}</div></div>
         ${x.sum.requests.length ? `<div><h4>요청 사항</h4><ul>${x.sum.requests.map((r) => `<li>${h(r)}</li>`).join('')}</ul></div>` : ''}
@@ -5036,7 +5031,7 @@ function renderMailView() {
         }
         ${x.sum.atts.length ? `<div><h4>첨부</h4><div class="mv-att">${x.sum.atts.map((n) => `<span>📎 ${h(n)}${readAtts.has(n) ? ' · 읽음' : ''}</span>`).join('')}</div></div>` : ''}
       </div>
-      ${x.mail.source === 'call' && !x.mail.pending ? (callState().diar && x.mail.lines?.some((l) => l.spk != null) ? callBubbles(x.mail) : callParas(x.mail, hits)) : ''}
+      ${x.mail.source === 'call' && !x.mail.pending ? callLog(x.mail, hits, callState().diar && x.mail.lines?.some((l) => l.spk != null)) : ''}
       ${x.mail.source === 'sms' ? `<div class="mv-thread" id="mv-sms-thread" data-tid="${h(x.mail.id)}"><div class="mv-th-h">대화 기록 · ${h(x.mail.from || '')}</div><div class="muted small" style="padding:10px">불러오는 중…</div></div>` : ''}
       <details class="mv-orig" ${x.mail.source === 'call' ? 'hidden' : ''} ${x.mail.source === 'sms' ? '' : 'open'}><summary>원문</summary><div>${highlightHtml((mb?.body || stripQuoted(x.mail.body || '')).slice(0, 6000), hits, h)}</div>${[].concat(x.mail.attText || [])
         .map((a) => `<div class="mv-attt">📎 ${h(a.name)}</div><div>${highlightHtml(a.text.slice(0, 3000), hits, h)}</div>`)
@@ -5065,8 +5060,10 @@ function renderMailView() {
   root.innerHTML = html;
   root.querySelector('.mv-ls').scrollTop = keepScroll;
   root.querySelector('.mv-item.cur')?.scrollIntoView({ block: 'nearest' });
-  const th = $('#mv-thread', root);
-  if (th) loadCallHistory(th);
+  // 같은 번호 통화가 여러 통이면 통화 내용 칸 안에서 지금 보는 통화 위치로
+  const lg = root.querySelector('.mv-calllog');
+  const cs = lg?.querySelector('.mv-callsep.cur');
+  if (lg && cs) lg.scrollTop = cs.offsetTop - 8;
   const st = $('#mv-sms-thread', root);
   if (st) loadThread(st);
   if (focusQ) {
@@ -5083,7 +5080,7 @@ const SRC_ICON = {
 };
 const srcIcon = (k) => `<i class="mv-ico" data-src="${k}">${SRC_ICON[k] || ''}</i>`;
 /** 통화 글: 쉬는 구간마다 문단으로 (앞에 녹음 시각) */
-function callParas(m, hits) {
+function callParasBody(m, hits) {
   const mmss = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
   let ps = [];
   if (m.lines?.length) {
@@ -5130,8 +5127,32 @@ function callParas(m, hits) {
     }
     if (cur) ps.push({ t: first ? p.t : null, text: cur });
   }
-  const body = ps.map((p) => `<div class="mv-para"><span class="mv-pt">${p.t != null ? mmss(p.t) : ''}</span><p>${highlightHtml(p.text, hits, h)}</p></div>`).join('');
+  return ps.map((p) => `<div class="mv-para"><span class="mv-pt">${p.t != null ? mmss(p.t) : ''}</span><p>${highlightHtml(p.text, hits, h)}</p></div>`).join('');
+}
+function callParas(m, hits) {
+  const body = callParasBody(m, hits);
   return `<div class="mv-thread mv-call"><div class="mv-th-h">통화 내용 · ${h(m.from)} <span class="muted" style="font-weight:400">· 자동 변환, 틀린 부분이 있을 수 있음</span></div><div class="mv-paras">${body || '<div class="muted small">내용 없음</div>'}</div></div>`;
+}
+/** 통화 내용: 같은 번호의 예전 통화까지 날짜순으로 이어서 (한 통뿐이면 그 통화만) */
+function callLog(m, hits, bubbles) {
+  const k = phoneKey(m.fromAddr);
+  const all = k.length >= 7 ? (S.callList || []).filter((c) => phoneKey(c.fromAddr) === k && (c.id === m.id || !c.pending)) : [];
+  const one = bubbles ? callBubbles(m) : callParas(m, hits);
+  if (all.length <= 1) return one;
+  all.sort((a, b) => (a.received || '').localeCompare(b.received || ''));
+  const sep = (c) => {
+    const at = (c.received || '').slice(0, 19);
+    const cur = c.id === m.id;
+    return `<div class="mv-callsep ${cur ? 'cur' : ''}">${h(thDay(at.slice(0, 10)))} ${h(thTime(at))} 통화${cur ? ' · 지금 보는 통화' : ''}</div>`;
+  };
+  if (bubbles) {
+    // 말풍선 보기: 예전 통화는 문단으로, 지금 통화는 말풍선 그대로
+    const prior = all.filter((c) => (c.received || '') < (m.received || '')).map((c) => `${sep(c)}<div class="mv-paras">${callParasBody(c, [])}</div>`).join('');
+    const after = all.filter((c) => (c.received || '') > (m.received || '')).map((c) => `${sep(c)}<div class="mv-paras">${callParasBody(c, [])}</div>`).join('');
+    return one.replace('<div class="mv-th-l">', `<div class="mv-th-l mv-calllog">${prior}${sep(m)}`).replace(/<\/div><\/div>$/, `${after}</div></div>`);
+  }
+  const body = all.map((c) => `${sep(c)}<div class="mv-paras">${callParasBody(c, c.id === m.id ? hits : []) || '<div class="muted small">내용 없음</div>'}</div>`).join('');
+  return `<div class="mv-thread mv-call"><div class="mv-th-h">통화 내용 · ${h(m.from)} <span class="muted" style="font-weight:400">· ${all.length}통 · 자동 변환, 틀린 부분이 있을 수 있음</span></div><div class="mv-calllog">${body}</div></div>`;
 }
 /** 통화 말풍선: 나(오른쪽 파랑) / 상대(왼쪽 회색) */
 function callBubbles(m) {
@@ -5511,33 +5532,5 @@ async function loadThread(el) {
   el.innerHTML = `<div class="mv-th-h">${el.querySelector('.mv-th-h').innerHTML} <span class="muted">· ${msgs.length}건</span></div><div class="mv-th-l">${html || '<div class="muted small">기록이 없습니다.</div>'}</div>`;
   const l = el.querySelector('.mv-th-l');
   l.scrollTop = l.scrollHeight;
-}
-/* 같은 번호 통화 기록 (통화 상세 맨 위, 날짜순) */
-function loadCallHistory(el) {
-  const id = el.dataset.tid;
-  const k = phoneKey(el.dataset.num || '');
-  const who = el.dataset.who || '';
-  const calls = k.length >= 7 ? (S.callList || []).filter((c) => phoneKey(c.fromAddr) === k) : [];
-  if (calls.length <= 1) return el.remove(); // 이 번호의 다른 통화가 없으면 숨김
-  const items = calls
-    .map((c) => ({ id: c.id, at: (c.received || '').slice(0, 19), pending: c.pending, gist: sumCache.get(c.id)?.sum?.gist || '', body: c.body || '' }))
-    .sort((a, b) => a.at.localeCompare(b.at));
-  let last = '';
-  const html = items
-    .map((m) => {
-      const d = m.at.slice(0, 10);
-      const sep = d !== last ? `<div class="mv-th-day">${h(thDay(d))}</div>` : '';
-      last = d;
-      const cur = m.id === id;
-      const gist = m.pending ? '아직 글로 바꾸지 않음' : m.gist || m.body.slice(0, 80);
-      return `${sep}<div class="mv-th-call ${cur ? 'cur' : ''}"><div class="mv-th-ch">${srcIcon('call')}${h(thTime(m.at))}${cur ? ' <span class="muted">· 지금 보는 통화</span>' : ''}</div>${
-        cur || m.pending ? `<div class="g">${h(gist)}</div>` : `<details><summary>${h(gist)}</summary><div class="b">${h(m.body)}</div></details>`
-      }</div>`;
-    })
-    .join('');
-  el.innerHTML = `<div class="mv-hbox" data-src="call"><div class="mv-th-h">${srcIcon('call')}통화 기록 · ${h(who)} <span class="muted">· ${items.length}건</span></div><div class="mv-th-l">${html}</div></div>`;
-  const l = el.querySelector('.mv-th-l');
-  const cur = l.querySelector('.cur');
-  l.scrollTop = cur ? cur.offsetTop - l.offsetTop - l.clientHeight + cur.offsetHeight + 24 : l.scrollHeight;
 }
 
