@@ -4356,9 +4356,11 @@ function mvState() {
   v.done ||= {};
   v.domains ||= {};
   v.over ||= {};
+  v.work ||= {}; // 메일 id → 'w'(업무) | 'p'(비업무) — 내가 직접 정한 것
+  v.workFrom ||= {}; // 보낸 사람(번호·메일 주소) → 'w' | 'p'
   return v;
 }
-const MV = { tab: 'main', cat: 'all', co: '', q: '', showDone: false, sel: null, src: 'all' };
+const MV = { tab: 'main', cat: 'all', co: '', q: '', showDone: false, sel: null, src: 'all', showPersonal: false };
 const mvVisible = () => MV.tab === 'mail';
 /** 휴대폰과 연결(Phone Link) 문자 읽기 */
 let smsBusy = false;
@@ -4755,6 +4757,7 @@ function mvItems() {
       // AI가 찾은 회사: 규칙으로 못 찾았을 때만
       if (!ov && x.sum.ai && x.sum.company && x.sum.cat !== 'auto' && (!x.co.name || x.co.by === 'domain-raw')) x.co = { name: x.sum.company, by: 'ai' };
       x.done = !!v.done[m.id];
+      x.work = workOf(x, ar);
       if (m.source === 'call' && m.pending) {
         const c = callState();
         x.sum.gist = m.busy ? '⏳ 글로 바꾸는 중…' : c.failed[m.name] ? `변환 실패: ${c.failed[m.name]}` : S.callReady === false ? '음성 인식 준비 전 (설정 → 통화 녹음)' : m.received.slice(0, 10) >= D.addDays(today, -(c.auto - 1)) ? '변환 대기 중' : '아직 글로 바꾸지 않음';
@@ -4812,7 +4815,7 @@ async function pushSummariesToPhone() {
       if (mvVisible()) renderMailView();
     }
     const items = mvItems()
-      .filter((x) => !x.done && x.sum.cat !== 'auto' && !(x.mail.source === 'call' && x.mail.pending))
+      .filter((x) => !x.done && x.work.biz && x.sum.cat !== 'auto' && !(x.mail.source === 'call' && x.mail.pending))
       .slice(0, 150)
       .map((x) => ({
         id: x.mail.id,
@@ -4840,11 +4843,51 @@ async function pushSummariesToPhone() {
   }
 }
 setInterval(() => S.data && pushSummariesToPhone(), 10 * 60 * 1000);
+/* ───── 업무 / 비업무 구분 ─────
+   비업무(개인 연락, 쇼핑·배송·금융·광고 알림)는 목록·휴대폰·배지에서 숨긴다.
+   순서: 내가 정한 것 > 보낸 사람에 정한 것 > AI 판단 > 규칙. 애매하면 업무로 둔다(놓치지 않게). */
+const WORK_WORDS = /세금계산서|홈택스|국세청|세무서|위택스|지방세|금융감독원|금감원|DART|전자공시|공시|감사|회계|세무|결산|재무제표|외부감사|공인회계사|KICPA|원천세|부가세|부가가치세|법인세|소득세|양도세|4대\s*보험|급여|용역|계약서|견적|청구|인보이스|invoice|미팅|회의|보고서|의견서|실사|평가|자료\s*요청|품관|품질관리/i;
+const PERSONAL_WORDS = /택배|배송|배달|출고|도착\s*예정|주문|결제|승인|카드\s*(사용|승인|결제)|입금|출금|잔액|이체|인증\s*번호|본인\s*확인|쿠폰|할인|이벤트|\(광고\)|광고|수신\s*거부|무료\s*거부|080-?\d|당첨|포인트|적립|마일리지|관리비|학원|어린이집|유치원|학교|병원|치과|진료|약국|미용|헤어|네일|예약\s*(확인|안내)|로그인\s*알림|비밀번호/;
+function workKey(m) {
+  return m.source === 'sms' || m.source === 'call' ? `p:${phoneKey(m.fromAddr)}` : `m:${String(m.fromAddr || m.from || '').toLowerCase()}`;
+}
+function workOf(x, ar) {
+  const v = mvState();
+  const m = x.mail;
+  const u = v.work[m.id] || v.workFrom[workKey(m)];
+  if (u) return { biz: u === 'w', by: v.work[m.id] ? 'user' : 'sender' };
+  if (ar && typeof ar.work === 'boolean') return { biz: ar.work, by: 'ai' };
+  const text = `${m.subject || ''} ${x.sum.title || ''} ${x.sum.gist || ''} ${(m.body || '').slice(0, 600)}`;
+  if (WORK_WORDS.test(text)) return { biz: true, by: 'rule' };
+  if (x.co?.name && x.co.by !== 'auto' && x.co.by !== 'domain-raw') return { biz: true, by: 'rule' };
+  if (x.sum.cat === 'auto' || PERSONAL_WORDS.test(text)) return { biz: false, by: 'rule' };
+  return { biz: true, by: 'rule' };
+}
+/** 업무 / 비업무 직접 정하기 (이 건만 또는 보낸 사람 전체) */
+async function mvSetWork(x) {
+  const v = mvState();
+  const to = x.work.biz ? 'p' : 'w';
+  const who = x.mail.from || x.mail.fromAddr || '보낸 사람';
+  const how = await choose(to === 'p' ? '비업무로 숨기기' : '업무로 표시', `${who}`, [
+    { label: '이 건만', value: 'one' },
+    { label: `${who}에게서 온 것 모두`, value: 'all' },
+  ]);
+  if (!how) return;
+  if (how === 'all') {
+    v.workFrom[workKey(x.mail)] = to;
+    delete v.work[x.mail.id];
+  } else v.work[x.mail.id] = to;
+  save();
+  schedulePhonePush();
+  renderMailSumBadge();
+  renderMailView();
+  toast(to === 'p' ? '비업무로 숨겼습니다. 아래 "비업무 보기"에서 다시 볼 수 있어요.' : '업무로 표시했습니다.');
+}
 function renderMailSumBadge(noPush) {
   if (!noPush) schedulePhonePush();
   const b = $('#mailSumBadge');
   if (!b) return;
-  const n = S.mailList || S.smsList ? mvItems().filter((x) => !x.done && (x.sum.cat === 'request' || x.sum.cat === 'due')).length : 0;
+  const n = S.mailList || S.smsList ? mvItems().filter((x) => !x.done && x.work.biz && (x.sum.cat === 'request' || x.sum.cat === 'due')).length : 0;
   b.hidden = !n;
   b.textContent = n;
 }
@@ -4883,7 +4926,8 @@ function renderMailView() {
   if (!root || root.hidden) return;
   const v = mvState();
   const all = mvItems();
-  const shown0 = all.filter((x) => MV.showDone || !x.done);
+  const personalN = all.filter((x) => !x.work.biz && (MV.showDone || !x.done)).length;
+  const shown0 = all.filter((x) => (MV.showDone || !x.done) && (MV.showPersonal || x.work.biz));
   // 회사 목록 (현재 기간)
   const coCount = new Map();
   for (const x of shown0) coCount.set(x.co.name || '', (coCount.get(x.co.name || '') || 0) + 1);
@@ -4899,7 +4943,15 @@ function renderMailView() {
   const cnt = { all: byQ.length, request: 0, due: 0, info: 0, auto: 0 };
   for (const x of byQ) cnt[x.sum.cat]++;
   const list = byQ.filter((x) => MV.cat === 'all' || x.sum.cat === MV.cat);
-  if (!list.some((x) => x.mail.id === MV.sel)) MV.sel = list[0]?.mail.id || null;
+  if (!list.some((x) => x.mail.id === MV.sel)) {
+    // 완료·일정 등록 등으로 목록에서 빠지면 맨 위가 아니라 바로 아래 항목으로 (없으면 바로 위)
+    const prev = MV.order || [];
+    const at = prev.indexOf(MV.sel);
+    const ids = new Set(list.map((x) => x.mail.id));
+    const next = at >= 0 ? [...prev.slice(at + 1), ...prev.slice(0, at).reverse()].find((id) => ids.has(id)) : null;
+    MV.sel = next || list[0]?.mail.id || null;
+  }
+  MV.order = list.map((x) => x.mail.id);
   const m = mailState();
   const status = S.mailLoading
     ? '받은 편지함 읽는 중…'
@@ -4916,6 +4968,7 @@ function renderMailView() {
         .join('')}
       <input class="inp mv-q" id="mv-q" placeholder="🔍 보낸 사람·제목 검색" value="${h(MV.q)}">
       <label class="checkline small"><input type="checkbox" id="mv-done" ${MV.showDone ? 'checked' : ''}>완료한 메일도 보기</label>
+      <label class="checkline small" title="개인 연락·쇼핑·배송·금융·광고 알림 등"><input type="checkbox" id="mv-personal" ${MV.showPersonal ? 'checked' : ''}>비업무도 보기${personalN ? ` (${personalN})` : ''}</label>
       <label class="mv-aisw ${aiState().on ? 'on' : ''}" title="Claude API로 요약 (설정 → AI 요약에서 키 입력)"><input type="checkbox" id="mv-ai" ${aiState().on ? 'checked' : ''}><span class="sw"></span>AI 요약</label>${aiState().on ? `<span class="small ${S.aiErr ? 'err' : 'muted'}">${h(S.aiErr || (aiBusy ? `AI 요약 중… ${aiLeft()}개 남음` : ''))}</span>` : ''}
       <div class="spacer"></div>${S.smsErr && MV.src !== 'mail' ? `<span class="small muted" title="${h(S.smsErr)}">문자 없음</span>` : ''}${callsBusy ? `<span class="small muted">통화 글로 바꾸는 중… ${callLeft() > 1 ? `(남은 ${callLeft()}개)` : ''}</span>` : ''}<span class="small muted">${h(status)}</span>
       <button type="button" class="btn" data-mvrefresh ${S.mailLoading ? 'disabled' : ''}>↻ 새로고침</button>
@@ -4935,8 +4988,8 @@ function renderMailView() {
       const due = x.sum.dues.find((y) => y.date);
       const ats = x.sum.atts.length;
       const pick = MV.pick && x.mail.source === 'call';
-      return `${head}<div data-src="${srcOf(x)}" class="mv-item ${MV.sel === x.mail.id && !MV.pick ? 'cur' : ''} ${x.done ? 'done' : ''} ${pick && MV.pick.has(x.mail.id) ? 'picked' : ''}" data-mvid="${h(x.mail.id)}">
-        ${pick ? `<input type="checkbox" class="mv-pick" tabindex="-1" ${MV.pick.has(x.mail.id) ? 'checked' : ''}>` : ''}<span class="mv-cat c-${x.sum.cat}">${h(x.sum.cat === 'due' ? '기한' : CAT_LABEL[x.sum.cat])}</span>
+      return `${head}<div data-src="${srcOf(x)}" class="mv-item ${MV.sel === x.mail.id && !MV.pick ? 'cur' : ''} ${x.done ? 'done' : ''} ${x.work.biz ? '' : 'personal'} ${pick && MV.pick.has(x.mail.id) ? 'picked' : ''}" data-mvid="${h(x.mail.id)}">
+        ${pick ? `<input type="checkbox" class="mv-pick" tabindex="-1" ${MV.pick.has(x.mail.id) ? 'checked' : ''}>` : ''}<span class="mv-cat c-${x.work.biz ? x.sum.cat : 'personal'}">${h(!x.work.biz ? '비업무' : x.sum.cat === 'due' ? '기한' : CAT_LABEL[x.sum.cat])}</span>
         <div class="mv-it"><div class="mv-r1"><b>${srcIcon(srcOf(x))}${h(x.mail.from || '')}</b><span>${x.more ? `<i class="mv-more">+${x.more}</i> ` : ''}${h((x.mail.received || '').slice(11, 16))}${x.done ? ' ✓완료' : ''}</span></div>
           <div class="mv-sub ${x.mail.unread ? '' : 'read'}">${h(x.sum.title)}</div>
           ${x.sum.gist && !x.sum.gist.startsWith(x.sum.title.replace(/…$/, '')) ? `<div class="mv-g">${h(x.sum.gist)}</div>` : ''}
@@ -4960,6 +5013,7 @@ function renderMailView() {
               ? `${x.mail.busy ? '' : x.mail.pending ? '<button type="button" class="btn" data-mvconv>글로 바꾸기</button>' : '<button type="button" class="btn" data-mvconv title="목소리 구분까지 다시">다시 바꾸기</button>'}<button type="button" class="btn" data-mvplay>▶ 녹음 듣기</button>`
               : '<button type="button" class="btn" data-mvopen>Outlook에서 열기</button>'
         }
+        <button type="button" class="btn" data-mvwork title="${x.work.biz ? '개인 연락·광고 등이면 목록에서 숨김' : '업무 목록에 다시 표시'}${x.work.by === 'ai' ? ' (지금은 AI 판단)' : ''}">${x.work.biz ? '비업무로' : '업무로'}</button>
         <button type="button" class="btn ${x.done ? '' : 'primary'}" data-mvdone>${x.done ? '완료 취소' : '✓ 완료'}</button></div>
       <div class="mv-scroll">
       <div class="mv-sum">
@@ -5005,6 +5059,7 @@ function renderMailView() {
   const focusQ = document.activeElement?.id === 'mv-q';
   root.innerHTML = html;
   root.querySelector('.mv-ls').scrollTop = keepScroll;
+  root.querySelector('.mv-item.cur')?.scrollIntoView({ block: 'nearest' });
   const th = $('#mv-thread', root);
   if (th) loadThread(th);
   if (focusQ) {
@@ -5250,6 +5305,7 @@ function bindMailView() {
       return;
     }
     if (e.target.closest('[data-mvco]')) return mvSetCompany(x);
+    if (e.target.closest('[data-mvwork]')) return mvSetWork(x);
     if (e.target.closest('[data-airetry]')) {
       aiRes.delete(x.mail.id);
       S.aiErr = null;
@@ -5301,6 +5357,8 @@ function bindMailView() {
       aiToggle(e.target.checked);
     } else if (e.target.id === 'mv-done') {
       MV.showDone = e.target.checked;
+      renderMailView();    } else if (e.target.id === 'mv-personal') {
+      MV.showPersonal = e.target.checked;
       renderMailView();
     }
   });
