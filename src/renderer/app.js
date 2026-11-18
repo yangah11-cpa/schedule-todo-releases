@@ -2821,8 +2821,8 @@ function previewTeamImport(parsed, me) {
   const from = parsed.reduce((a, p) => (!a || p.from < a ? p.from : a), null);
   const to = parsed.reduce((a, p) => (!a || p.to > a ? p.to : a), null);
   let cutoff = settings().teamCutoff && settings().teamCutoff >= from && settings().teamCutoff <= to ? settings().teamCutoff : to;
-  const label = { new: '새 일정', changed: '변경', removed: '일정표에서 빠짐', same: '변경 없음' };
-  const color = { new: 'var(--accent)', changed: '#B26B00', removed: 'var(--sun)', same: 'var(--faint)' };
+  const label = { new: '새 일정', changed: '변경', removed: '일정표에서 빠짐', same: '변경 없음', exists: '이미 있음' };
+  const color = { new: 'var(--accent)', changed: '#B26B00', removed: 'var(--sun)', same: 'var(--faint)', exists: 'var(--faint)' };
   const fmt = (a, b) => (a === b ? D.shortLabel(a) : `${D.shortLabel(a)} ~ ${D.shortLabel(b)}`);
   let rows = [];
 
@@ -2833,6 +2833,7 @@ function previewTeamImport(parsed, me) {
       .map((m) => (m.end > cutoff ? { ...m, end: cutoff, cut: true } : m));
     const existing = S.data.events.filter((e) => e.team);
     const used = new Set();
+    const localIdSet = new Set(S.data.events.map((e) => e.id));
     rows = [];
     for (const m of mine) {
       const ex = existing.find((e) => !used.has(e) && sameClient(e.team.client, m.client) && e.date <= m.end && m.start <= e.endDate);
@@ -2840,7 +2841,13 @@ function previewTeamImport(parsed, me) {
         used.add(ex);
         const same = ex.date === m.start && ex.endDate === m.end && JSON.stringify(ex.people || []) === JSON.stringify(m.people);
         rows.push({ kind: same ? 'same' : 'changed', m, ex });
-      } else rows.push({ kind: 'new', m });
+      } else {
+        // 팀 일정표로 넣은 게 아니어도, 직접 넣은 같은 회사 일정(이 앱·구글 캘린더·휴대폰)이 기간이 겹치면 이미 있는 것으로 봄
+        const other =
+          S.data.events.find((e) => !e.team && !e.deleted && e.date <= m.end && m.start <= (e.endDate || e.date) && sameClient(m.client, e.title)) ||
+          (S.g.connected ? S.gEvents.find((g) => !g.holidayCal && !(g.appId && localIdSet.has(g.appId)) && g.date <= m.end && m.start <= (g.endDate || g.date) && sameClient(m.client, g.title)) : null);
+        rows.push(other ? { kind: 'exists', m, other } : { kind: 'new', m });
+      }
     }
     for (const e of existing) {
       if (!used.has(e) && e.date >= from && e.date <= cutoff) rows.push({ kind: 'removed', ex: e });
@@ -2870,21 +2877,23 @@ function previewTeamImport(parsed, me) {
   );
   const drawList = () => {
     const n = build();
-    const counts = { new: 0, changed: 0, removed: 0, same: 0 };
+    const counts = { new: 0, changed: 0, removed: 0, same: 0, exists: 0 };
     rows.forEach((x) => counts[x.kind]++);
-    $('#ti-sum', el).textContent = `${D.shortLabel(cutoff)}까지 내 일정 ${n}건 — 새 일정 ${counts.new} · 변경 ${counts.changed} · 빠짐 ${counts.removed} · 변경 없음 ${counts.same}`;
+    $('#ti-sum', el).textContent = `${D.shortLabel(cutoff)}까지 내 일정 ${n}건 — 새 일정 ${counts.new} · 변경 ${counts.changed} · 빠짐 ${counts.removed} · 변경 없음 ${counts.same}${counts.exists ? ` · 이미 있음 ${counts.exists}` : ''}`;
     $('#ti-list', el).innerHTML =
       rows
         .map(
-          (x, i) => `<label class="row gap10" style="padding:8px 12px;border-bottom:1px solid #F0E9E1;align-items:flex-start;${x.kind === 'same' ? 'opacity:.6' : ''}">
-            <input type="checkbox" data-ti="${i}" ${x.kind === 'same' ? 'disabled' : 'checked'} style="margin-top:3px;width:16px;height:16px;accent-color:var(--accent)">
+          (x, i) => `<label class="row gap10" style="padding:8px 12px;border-bottom:1px solid #F0E9E1;align-items:flex-start;${x.kind === 'same' || x.kind === 'exists' ? 'opacity:.6' : ''}">
+            <input type="checkbox" data-ti="${i}" ${x.kind === 'same' ? 'disabled' : x.kind === 'exists' ? '' : 'checked'} style="margin-top:3px;width:16px;height:16px;accent-color:var(--accent)">
             <span class="grow" style="display:flex;flex-direction:column;gap:2px">
               <span><b style="color:${color[x.kind]};font-size:12px;margin-right:6px">${label[x.kind]}</b>${h(x.m ? x.m.title : x.ex.title)}</span>
               <span class="xs muted">${
                 x.m
                   ? `${fmt(x.m.start, x.m.end)}${x.m.cut ? ' (반영 기한까지만)' : ''}${
                       x.kind === 'changed' && (x.ex.date !== x.m.start || x.ex.endDate !== x.m.end) ? ` (기존 ${fmt(x.ex.date, x.ex.endDate)})` : ''
-                    } · 참여: ${h(x.m.people.join(', ') || '없음')}${x.m.leader ? ` · 인차지: ${h(x.m.leader)}` : ''}`
+                    } · 참여: ${h(x.m.people.join(', ') || '없음')}${x.m.leader ? ` · 인차지: ${h(x.m.leader)}` : ''}${
+                      x.kind === 'exists' ? ` · 캘린더에 "${h(x.other.title)}" (${fmt(x.other.date, x.other.endDate || x.other.date)}) 있음 — 체크하면 따로 하나 더 등록` : ''
+                    }`
                   : `${fmt(x.ex.date, x.ex.endDate)} · 체크하면 캘린더에서 삭제`
               }</span>
             </span></label>`

@@ -177,6 +177,7 @@ export function myEngagements(parsed, me) {
     const mine = p.people.find((x) => x.name === me);
     if (!mine) continue;
     for (const e of mine.entries) {
+      if (e.added) continue; // 일정 탭에서 넣은 것(원래 캘린더에 있는 일정)은 다시 등록하지 않음
       const mates = [];
       let leader = e.lead ? me : null;
       for (const o of p.people) {
