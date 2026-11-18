@@ -5017,8 +5017,8 @@ function renderMailView() {
         <button type="button" class="btn ${x.done ? '' : 'primary'}" data-mvdone>${x.done ? '완료 취소' : '✓ 완료'}</button></div>
       <div class="mv-scroll">
       ${
-        x.mail.source === 'sms' || x.mail.source === 'call'
-          ? `<div class="mv-thread mv-hist" id="mv-thread" data-tid="${h(x.mail.id)}" data-num="${h(x.mail.fromAddr || '')}" data-who="${h(x.mail.from || '')}"><div class="mv-th-h">같은 번호 기록 · ${h(x.mail.from || '')}</div><div class="muted small" style="padding:10px">불러오는 중…</div></div>`
+        x.mail.source === 'call'
+          ? `<div class="mv-hist" id="mv-thread" data-tid="${h(x.mail.id)}" data-num="${h(x.mail.fromAddr || '')}" data-who="${h(x.mail.from || '')}"><div class="mv-th-h">같은 번호 기록 · ${h(x.mail.from || '')}</div><div class="muted small" style="padding:10px">불러오는 중…</div></div>`
           : ''
       }
       <div class="mv-sum">
@@ -5037,6 +5037,7 @@ function renderMailView() {
         ${x.sum.atts.length ? `<div><h4>첨부</h4><div class="mv-att">${x.sum.atts.map((n) => `<span>📎 ${h(n)}${readAtts.has(n) ? ' · 읽음' : ''}</span>`).join('')}</div></div>` : ''}
       </div>
       ${x.mail.source === 'call' && !x.mail.pending ? (callState().diar && x.mail.lines?.some((l) => l.spk != null) ? callBubbles(x.mail) : callParas(x.mail, hits)) : ''}
+      ${x.mail.source === 'sms' ? `<div class="mv-thread" id="mv-sms-thread" data-tid="${h(x.mail.id)}"><div class="mv-th-h">대화 기록 · ${h(x.mail.from || '')}</div><div class="muted small" style="padding:10px">불러오는 중…</div></div>` : ''}
       <details class="mv-orig" ${x.mail.source === 'call' ? 'hidden' : ''} ${x.mail.source === 'sms' ? '' : 'open'}><summary>원문</summary><div>${highlightHtml((mb?.body || stripQuoted(x.mail.body || '')).slice(0, 6000), hits, h)}</div>${[].concat(x.mail.attText || [])
         .map((a) => `<div class="mv-attt">📎 ${h(a.name)}</div><div>${highlightHtml(a.text.slice(0, 3000), hits, h)}</div>`)
         .join('')}</details>
@@ -5065,7 +5066,9 @@ function renderMailView() {
   root.querySelector('.mv-ls').scrollTop = keepScroll;
   root.querySelector('.mv-item.cur')?.scrollIntoView({ block: 'nearest' });
   const th = $('#mv-thread', root);
-  if (th) loadThread(th);
+  if (th) loadCallHistory(th);
+  const st = $('#mv-sms-thread', root);
+  if (st) loadThread(st);
   if (focusQ) {
     const qi = $('#mv-q', root);
     qi.focus();
@@ -5466,64 +5469,73 @@ function openClipChooser({ text = '', app = '', copied = false } = {}) {
   });
 }
 
-/* 같은 번호와 주고받은 문자 + 통화 녹음을 시간순으로 (상세 화면 맨 위) */
+const thDay = (d) => {
+  const t = D.today();
+  return d === t ? '오늘' : d === D.addDays(t, -1) ? '어제' : `${+d.slice(5, 7)}월 ${+d.slice(8, 10)}일 (${'일월화수목금토'[D.dow(d)]})`;
+};
+const thTime = (at) => {
+  const hh = +at.slice(11, 13);
+  return `${hh < 12 ? '오전' : '오후'} ${hh % 12 || 12}:${at.slice(14, 16)}`;
+};
+/* 같은 번호와 주고받은 문자 기록 (휴대폰과 연결 앱처럼) */
 const threadCache = new Map();
 async function loadThread(el) {
   const id = el.dataset.tid;
-  const num = el.dataset.num || '';
-  const who = el.dataset.who || '';
-  const k = phoneKey(num);
-  const ck = k.length >= 7 ? `n:${k}` : `i:${id}`;
-  let msgs = threadCache.get(ck);
+  let msgs = threadCache.get(id);
   if (!msgs) {
-    const r = await window.api.phone.thread(k.length >= 7 ? { num, limit: 120 } : { id, limit: 120 });
+    const r = await window.api.phone.thread({ id, limit: 80 });
     const res = r.ok ? r.data : { ok: false };
-    msgs = res.ok ? res.messages : [];
-    threadCache.set(ck, msgs);
-    setTimeout(() => threadCache.delete(ck), 60000);
+    if (!res.ok) {
+      if (el.isConnected) el.querySelector('.muted').textContent = '대화 기록을 불러오지 못했습니다.';
+      return;
+    }
+    msgs = res.messages;
+    threadCache.set(id, msgs);
+    setTimeout(() => threadCache.delete(id), 60000);
   }
   if (!el.isConnected || el.dataset.tid !== id) return;
-  // 같은 번호 통화 녹음
-  const calls = k.length >= 7 ? (S.callList || []).filter((c) => phoneKey(c.fromAddr) === k) : [];
-  const items = [
-    ...msgs.map((m) => ({ ...m, kind: 'sms' })),
-    ...calls.map((c) => ({ kind: 'call', id: c.id, at: (c.received || '').slice(0, 19), pending: c.pending, gist: sumCache.get(c.id)?.sum?.gist || '', body: c.body || '' })),
-  ].sort((a, b) => a.at.localeCompare(b.at));
-  if (items.length <= 1 && (items[0]?.id === id || !items.length)) {
-    el.remove(); // 이 번호의 다른 기록이 없으면 숨김
-    return;
-  }
-  const t = D.today();
-  const dayLabel = (d) => (d === t ? '오늘' : d === D.addDays(t, -1) ? '어제' : `${+d.slice(5, 7)}월 ${+d.slice(8, 10)}일 (${'일월화수목금토'[D.dow(d)]})`);
-  const tm = (at) => {
-    const hh = +at.slice(11, 13);
-    return `${hh < 12 ? '오전' : '오후'} ${hh % 12 || 12}:${at.slice(14, 16)}`;
-  };
+  const who = el.querySelector('.mv-th-h').textContent.replace(/^대화 기록 · /, '');
   let last = '';
   let prevMin = '';
-  const html = items
+  const html = msgs
     .map((m) => {
       const d = m.at.slice(0, 10);
-      const sep = d !== last ? `<div class="mv-th-day">${h(dayLabel(d))}</div>` : '';
+      const sep = d !== last ? `<div class="mv-th-day">${h(thDay(d))}</div>` : '';
       last = d;
-      if (m.kind === 'call') {
-        prevMin = '';
-        const cur = m.id === id;
-        const gist = m.pending ? '아직 글로 바꾸지 않음' : m.gist || m.body.slice(0, 80);
-        return `${sep}<div class="mv-th-call ${cur ? 'cur' : ''}"><div class="mv-th-ch">${srcIcon('call')}통화 ${h(tm(m.at))}${cur ? ' <span class="muted">· 지금 보는 통화</span>' : ''}</div>${
-          cur || m.pending ? `<div class="g">${h(gist)}</div>` : `<details><summary>${h(gist)}</summary><div class="b">${h(m.body)}</div></details>`
-        }</div>`;
-      }
       const min = `${m.sent}|${m.at.slice(0, 16)}`;
-      const head = min !== prevMin ? `<div class="mv-th-t">${m.sent ? '' : `${h(who)} `}${h(tm(m.at))}</div>` : '';
+      const head = min !== prevMin ? `<div class="mv-th-t">${m.sent ? '' : `${h(who)} `}${h(thTime(m.at))}</div>` : '';
       prevMin = min;
       return `${sep}<div class="mv-th-m ${m.sent ? 'me' : ''} ${m.id === id ? 'cur' : ''}">${head}<div class="b">${h(m.body)}</div></div>`;
     })
     .join('');
-  const nC = items.filter((m) => m.kind === 'call').length;
-  const nS = items.length - nC;
-  el.innerHTML = `<div class="mv-th-h">같은 번호 기록 · ${h(who)} <span class="muted">· ${[nS ? `문자 ${nS}` : '', nC ? `통화 ${nC}` : ''].filter(Boolean).join(' · ')}</span></div><div class="mv-th-l">${html}</div>`;
-  // 지금 보는 문자·통화가 보이도록 (없으면 맨 아래 = 최근)
+  el.innerHTML = `<div class="mv-th-h">${el.querySelector('.mv-th-h').innerHTML} <span class="muted">· ${msgs.length}건</span></div><div class="mv-th-l">${html || '<div class="muted small">기록이 없습니다.</div>'}</div>`;
+  const l = el.querySelector('.mv-th-l');
+  l.scrollTop = l.scrollHeight;
+}
+/* 같은 번호 통화 기록 (통화 상세 맨 위, 날짜순) */
+function loadCallHistory(el) {
+  const id = el.dataset.tid;
+  const k = phoneKey(el.dataset.num || '');
+  const who = el.dataset.who || '';
+  const calls = k.length >= 7 ? (S.callList || []).filter((c) => phoneKey(c.fromAddr) === k) : [];
+  if (calls.length <= 1) return el.remove(); // 이 번호의 다른 통화가 없으면 숨김
+  const items = calls
+    .map((c) => ({ id: c.id, at: (c.received || '').slice(0, 19), pending: c.pending, gist: sumCache.get(c.id)?.sum?.gist || '', body: c.body || '' }))
+    .sort((a, b) => a.at.localeCompare(b.at));
+  let last = '';
+  const html = items
+    .map((m) => {
+      const d = m.at.slice(0, 10);
+      const sep = d !== last ? `<div class="mv-th-day">${h(thDay(d))}</div>` : '';
+      last = d;
+      const cur = m.id === id;
+      const gist = m.pending ? '아직 글로 바꾸지 않음' : m.gist || m.body.slice(0, 80);
+      return `${sep}<div class="mv-th-call ${cur ? 'cur' : ''}"><div class="mv-th-ch">${srcIcon('call')}${h(thTime(m.at))}${cur ? ' <span class="muted">· 지금 보는 통화</span>' : ''}</div>${
+        cur || m.pending ? `<div class="g">${h(gist)}</div>` : `<details><summary>${h(gist)}</summary><div class="b">${h(m.body)}</div></details>`
+      }</div>`;
+    })
+    .join('');
+  el.innerHTML = `<div class="mv-hbox" data-src="call"><div class="mv-th-h">${srcIcon('call')}통화 기록 · ${h(who)} <span class="muted">· ${items.length}건</span></div><div class="mv-th-l">${html}</div></div>`;
   const l = el.querySelector('.mv-th-l');
   const cur = l.querySelector('.cur');
   l.scrollTop = cur ? cur.offsetTop - l.offsetTop - l.clientHeight + cur.offsetHeight + 24 : l.scrollHeight;

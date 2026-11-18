@@ -594,3 +594,13 @@ tr.tv-me td { background: #FAF1EC; }
 .mv-th-call .g, .mv-th-call summary { margin-top: 3px; line-height: 1.5; color: var(--ink); }
 .mv-th-call summary { cursor: pointer; }
 .mv-th-call .b { margin-top: 6px; white-space: pre-wrap; line-height: 1.6; color: var(--muted); max-height: 220px; overflow: auto; }
+.mv-hist { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.mv-hist > .mv-th-h { border: 1px solid var(--line); border-radius: 12px; }
+.mv-hbox { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: #FDFCFB; }
+.mv-hbox[data-src="sms"] > .mv-th-h { background: #EEF2E6; }
+.mv-hbox[data-src="call"] > .mv-th-h { background: #F4E8EC; }
+.mv-hbox > .mv-th-h { display: flex; align-items: center; gap: 6px; }
+.mv-hbox > .mv-th-h svg { width: 14px; height: 14px; }
+.mv-hbox[data-src="sms"] > .mv-th-h svg { color: #6F8A4A; }
+.mv-hbox[data-src="call"] > .mv-th-h svg { color: #9A6478; }
+.mv-hbox .mv-th-l { max-height: 260px; }
