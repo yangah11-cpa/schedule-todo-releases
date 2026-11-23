@@ -3117,24 +3117,25 @@ function renderAuditTab() {
   const v = $('#auditView');
   const A = auData();
   const src = A.src || {};
+  // 자료별 ERP 메뉴 (한 줄). 올린 날짜·건수는 마우스를 올리면 보임
+  const AU_MENU = { contracts: 'ERP > 계약관리 > 계약내용 조회', hours: 'ERP > 업무시간관리 > 감사업무시간집계표', partner: 'ERP > 업무시간관리 > 회계사별 업무시간 조회' };
+  const md = (at) => new Date(at).toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' });
   const chips = Object.entries(AU_KIND)
     .map(([k, label]) => {
+      let state = src[k] ? 'ok' : '';
+      let tip = src[k] ? `${auN0(src[k].count)}건 · ${new Date(src[k].at).toLocaleString('ko-KR')} 붙여넣음` : '아직 붙여넣지 않음';
       if (k === 'partner' && A.partnerSrc && Object.keys(A.partnerSrc).length) {
         const need = new Set(A.projects.map((p) => A.contracts?.[p.code]?.partner).filter(Boolean));
         const names = [...new Set([...need, ...Object.keys(A.partnerSrc)])];
-        return names
-          .map((nm) => {
-            const x = A.partnerSrc[nm];
-            return `<span class="au-src ${x ? 'ok' : 'miss'}" title="${x ? h(`${nm} · ${auN0(x.count)}건 · ${new Date(x.at).toLocaleString('ko-KR')}`) : h(`${nm} 담당이사 자료를 아직 붙이지 않았습니다`)}">담당이사 ${h(nm)} ${x ? new Date(x.at).toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' }) : '없음'}</span>`;
-          })
-          .join('');
+        const miss = names.filter((nm) => !A.partnerSrc[nm]);
+        state = miss.length ? 'miss' : 'ok';
+        tip = names.map((nm) => `${nm}: ${A.partnerSrc[nm] ? `${md(A.partnerSrc[nm].at)} (${auN0(A.partnerSrc[nm].count)}건)` : '없음'}`).join('\n');
       }
-      const s = src[k];
-      return `<span class="au-src ${s ? 'ok' : ''}" title="${s ? h(`${s.fileName} · ${new Date(s.at).toLocaleString('ko-KR')}`) : '아직 안 올림'}">${label} ${s ? `${auN0(s.count)}건 · ${new Date(s.at).toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' })}` : '없음'}</span>`;
+      return `<span class="au-src ${state}" title="${h(tip)}"><b>${label}</b> : ${h(AU_MENU[k])}</span>`;
     })
     .join('');
   const rows = A.projects.map((p) => computeAuditRow(p, A));
-  const head = `<div class="tv-head"><span class="tv-title" style="cursor:default">감사시간</span>${chips}<span class="spacer"></span>
+  const head = `<div class="tv-head au-head"><span class="tv-title" style="cursor:default">감사시간</span><span class="au-srcs">${chips}</span><span class="spacer"></span>
       <button type="button" class="btn primary" data-aupaste title="회사 시스템 화면이나 엑셀에서 전체 선택(Ctrl+A) → 복사(Ctrl+C) 후 여기서 Ctrl+V">붙여넣기 (Ctrl+V)</button><button type="button" class="btn" data-auimport>엑셀 파일로</button><button type="button" class="btn" data-auexport title="고른 프로젝트로 업무시간 입력 요청표(AuditHour 3~9행 모양)를 엑셀로 저장">엑셀로 내보내기</button></div>
     <div class="au-add"><input class="inp" id="auQ" placeholder="프로젝트 코드나 회사명으로 추가" autocomplete="off"><button type="button" class="btn" data-auadd>추가</button><div class="au-sug" id="auSug" hidden></div></div>`;
   if (!A.projects.length) {

@@ -611,3 +611,8 @@ tr.tv-me td { background: #EFF5F7; }
 .mv-scroll > * { flex-shrink: 0; }
 .mv-scroll > .mv-call { flex: 1 1 0; min-height: 260px; display: flex; flex-direction: column; }
 .mv-scroll > .mv-call > .mv-paras, .mv-scroll > .mv-call > .mv-calllog, .mv-scroll > .mv-call > .mv-th-l { flex: 1; min-height: 0; max-height: none; overflow-y: auto; }
+.tv-head.au-head { flex-wrap: nowrap; }
+.au-head .btn { white-space: nowrap; flex-shrink: 0; }
+.au-srcs { display: flex; gap: 6px; min-width: 0; overflow: hidden; flex-wrap: nowrap; }
+.au-srcs .au-src { font-size: 11.5px; padding: 3px 8px; flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.au-srcs .au-src b { font-weight: 600; }
