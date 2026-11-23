@@ -27,9 +27,51 @@ const col = (ks, ...names) => {
   return -1;
 };
 
+const CODE_RE = /^\d{2}-\d{4}-\d{2}-\d{4}$/;
+const filled = (row) => (row || []).filter((v) => v !== null && v !== undefined && String(v).trim() !== '');
+/**
+ * ERP 화면에서 복사하면 두 줄짜리 머리글("최소표준↵감사시간")이 여러 줄로 쪼개져 붙음.
+ * 첫 자료 줄(계약번호 모양) 위의 줄들을 이어 붙여 머리글 한 줄로 되돌린다:
+ * 줄이 바뀌는 곳은 머리글 칸 안의 줄바꿈이므로, 앞줄 마지막 말 + 다음 줄 첫 말을 합친다.
+ * 합친 머리글 수가 자료 칸 수와 맞을 때만 사용.
+ */
+export function unwrapHeader(rows) {
+  const first = rows.findIndex((r) => (r || []).some((v) => CODE_RE.test(String(v ?? '').trim())));
+  if (first < 2) return rows;
+  const width = Math.max(...rows.slice(first, first + 20).map((r) => (r || []).length));
+  const dataW = Math.max(...rows.slice(first, first + 20).map((r) => {
+    const a = r || [];
+    let n = a.length;
+    while (n > 0 && (a[n - 1] === null || a[n - 1] === undefined || a[n - 1] === '')) n--;
+    return n;
+  }));
+  // 머리글 줄: 첫 자료 줄 위에서, 글자로만 된 줄 (합계처럼 숫자만 있는 줄은 뺌)
+  const head = [];
+  for (let i = 0; i < first; i++) {
+    const t = filled(rows[i]);
+    if (!t.length || t.every((v) => typeof v === 'number')) continue;
+    head.push(t.map((v) => String(v).trim()));
+  }
+  if (!head.length) return rows;
+  for (let tries = 0; tries < 2; tries++) {
+    const toks = [];
+    for (const line of head) {
+      if (tries === 0 && toks.length) {
+        toks[toks.length - 1] += line[0];
+        toks.push(...line.slice(1));
+      } else toks.push(...line);
+    }
+    if (toks.length === dataW || toks.length === width) return [toks, ...rows.slice(first)];
+  }
+  return rows;
+}
+
 /** 시트 하나가 어떤 자료인지 알아보고 필요한 값만 뽑음 */
 export function detectSheet(sheet) {
-  const rows = sheet.rows || [];
+  const d = detectSheet0(sheet.rows || []);
+  return d || detectSheet0(unwrapHeader(sheet.rows || []));
+}
+function detectSheet0(rows) {
   // 담당이사 투입 내역: 이름, 계약번호, 감사절차, 합계
   let h = findHeader(rows, ['이름', '계약번호', '감사절차']);
   if (h) {
