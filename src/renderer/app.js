@@ -6,7 +6,7 @@ import { solarPayload, lunarTargets, lunarPayload, fromGoogle, timeRange, compos
 import { parseTeamWorkbook, myEngagements, teamOn, sameClient } from './lib/team.js';
 import { detectSheet as detectAuditSheet, computeRow as computeAuditRow, searchContracts as searchAuditContracts, DEFAULT_PROCS as AUDIT_PROCS, parseClipboardTable, mergePartner } from './lib/audit.js';
 import { summarize, companyOf, domainOf, CAT_LABEL } from './lib/mailsum.js';
-import { mailCandidates, stripQuoted, highlightHtml, parseShared, cleanSubject, setKeywords, extractWords, scoreWords, mergeKeywords, keywordsOf, BASE_KEYS } from './lib/mailparse.js';
+import { mailCandidates, stripQuoted, highlightHtml, parseShared, cleanSubject, mailFp, setKeywords, extractWords, scoreWords, mergeKeywords, keywordsOf, BASE_KEYS } from './lib/mailparse.js';
 
 /* ───────────── 공통 ───────────── */
 const $ = (s, r = document) => r.querySelector(s);
@@ -5832,10 +5832,20 @@ async function pushSummariesToPhone() {
           .map((d) => ({ date: d.date, endDate: d.endDate || d.date, allDay: !!d.allDay || !d.startTime, start: d.startTime || null, end: d.endTime || null, place: d.place || '', text: (d.text || '').slice(0, 80) })),
         ai: !!x.sum.ai,
         more: x.more || 0,
+        fp: x.mail.source === 'mail' ? mailFp(x.mail.subject, x.mail.fromAddr || x.mail.from) : '',
       }));
-    const body = JSON.stringify(items);
+    // PC에서 완료했거나 비업무로 숨긴 메일의 지문 (휴대폰 Gmail '일정 후보'에서 빼는 데 씀. 제목·내용은 보내지 않음)
+    const done = [
+      ...new Set(
+        mvItems()
+          .filter((x) => x.mail.source === 'mail' && (x.done || !x.work.biz))
+          .map((x) => mailFp(x.mail.subject, x.mail.fromAddr || x.mail.from))
+          .filter(Boolean)
+      ),
+    ].slice(0, 800);
+    const body = JSON.stringify([items, done]);
     if (body === phLast) return;
-    const r = await window.api.drive.save('mail-summary.json', JSON.stringify({ v: 1, asOf: nowLocal(), items }));
+    const r = await window.api.drive.save('mail-summary.json', JSON.stringify({ v: 1, asOf: nowLocal(), items, done }));
     if (r.ok) phLast = body;
   } catch {
     /* 오프라인 등: 다음에 다시 */

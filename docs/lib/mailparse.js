@@ -454,3 +454,19 @@ export function parseShared(raw, today, now) {
 }
 
 export const _test = { findDates, findTime, findPlace };
+
+/**
+ * 같은 메일인지 알아보는 짧은 지문 (PC 메일과 휴대폰 Gmail 사이). 제목·보낸 주소로 만들고 내용은 담지 않음.
+ * "RE: [회신] 자료 요청" 같은 앞머리와 띄어쓰기·기호는 무시
+ */
+export function mailFp(subject, from) {
+  const subj = String(subject || '')
+    .toLowerCase()
+    .replace(/^(\s*(re|fw|fwd|회신|전달|답장)\s*[:：]\s*|\s*\[(회신|전달|re|fw)\]\s*)+/gi, '')
+    .replace(/[^0-9a-z가-힣]/g, '');
+  const addr = (String(from || '').match(/[\w.+-]+@[\w.-]+/) || [''])[0].toLowerCase();
+  if (!subj) return '';
+  let h = 2166136261;
+  for (const ch of `${subj}|${addr}`) h = Math.imul(h ^ ch.codePointAt(0), 16777619) >>> 0;
+  return h.toString(36);
+}

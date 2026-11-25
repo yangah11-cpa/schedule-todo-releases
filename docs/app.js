@@ -6,7 +6,7 @@ import { solarToLunar, lunarToSolar, LUNAR_MAX_YEAR } from './lib/lunar.js';
 import { getHolidays } from './lib/holidays.js';
 import { parseQuickAdd } from './lib/recur.js';
 import { solarPayload, lunarTargets, lunarPayload, fromGoogle, timeRange, composeDescription } from './lib/gsync.js';
-import { parseShared, mailCandidates, setKeywords, extractWords, scoreWords, mergeKeywords, keywordsOf, BASE_KEYS, highlightHtml, cleanSubject } from './lib/mailparse.js';
+import { parseShared, mailCandidates, mailFp, setKeywords, extractWords, scoreWords, mergeKeywords, keywordsOf, BASE_KEYS, highlightHtml, cleanSubject } from './lib/mailparse.js';
 import { gmailClient, GMAIL_SCOPE, GMAIL } from './lib/gmail.js';
 
 /* ───────────── 공통 ───────────── */
@@ -796,7 +796,7 @@ async function loadMailSum() {
   try {
     const d = await driveRead('mail-summary.json');
     if (d?.items) {
-      S.mailSum = { asOf: d.asOf, items: d.items };
+      S.mailSum = { asOf: d.asOf, items: d.items, done: d.done || [] };
       store.set('st.mailsum', S.mailSum);
     }
   } catch {
@@ -2104,9 +2104,16 @@ const gmSave = () => {
   store.set('st.gm.seen', GM.seen);
   store.set('st.gm.done', GM.done);
 };
+/** PC에서 완료(또는 비업무)한 메일 + 휴대폰 '메일·문자·통화'에서 완료한 메일의 지문 */
+function pcDoneFps() {
+  const set = new Set(S.mailSum?.done || []);
+  for (const x of S.mailSum?.items || []) if (x.fp && S.mailDone[x.id]) set.add(x.fp);
+  return set;
+}
 function gmCands() {
   const today = D.today();
-  return GM.cands.filter((c) => !GM.done[c.key] && (c.endDate || c.date) >= today);
+  const pc = pcDoneFps();
+  return GM.cands.filter((c) => !GM.done[c.key] && (c.endDate || c.date) >= today && !pc.has(mailFp(c.subject, c.from)));
 }
 const whenTxt = (c) => {
   const d = (x) => `${+x.slice(5, 7)}/${+x.slice(8, 10)}(${'일월화수목금토'[D.dow(x)]})`;
