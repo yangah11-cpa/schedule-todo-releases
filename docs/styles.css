@@ -403,3 +403,7 @@ mark.hl-place { background: #CDEFD6; }
 .tw tbody th, .tw tbody td { height: 52px; padding-top: 7px; padding-bottom: 7px; }
 .tw tbody th { font-size: 13px; }
 .tc { padding: 6px 7px; font-size: 12.5px; border-radius: 7px; }
+
+/* 일정 상세: 최소 3건은 보이게 높이 확보 (주간 표는 남은 높이) */
+#viewCal > .wbox { flex: 1 1 0; min-height: 150px; }
+#viewCal > .wdetail { flex: 0 0 clamp(280px, 46%, 420px); }

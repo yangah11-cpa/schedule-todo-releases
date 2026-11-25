@@ -630,11 +630,11 @@ function renderCal() {
   // 장소·참여 인원이 있는 일정 + 오늘 일정은 모두
   const isToday = (e) => e.date <= today && e.endDate >= today;
   const detail = segs
-    .filter((g) => g.kind === 'ev' && (g.e.place || g.e.people?.length || isToday(g.e)))
+    .filter((g) => g.kind === 'ev' && g.e.endDate >= today && (g.e.place || g.e.people?.length || isToday(g.e))) // 지난 일정은 빼고
     .sort((x, y) => x.e.date.localeCompare(y.e.date) || (x.e.allDay ? 0 : 1) - (y.e.allDay ? 0 : 1) || (x.e.startTime || '').localeCompare(y.e.startTime || ''));
   html += `<div class="wdetail"><div class="wdh"><b>일정 상세</b><span class="xs muted">${detail.length ? `${detail.length}건` : ''}</span></div>
     <div class="wdl">`;
-  if (!detail.length) html += '<div class="empty small">이 주에는 오늘 일정이나 장소·참여 인원이 적힌 일정이 없습니다.</div>';
+  if (!detail.length) html += '<div class="empty small">이 주에는 오늘·앞으로의 일정 중 장소·참여 인원이 적힌 일정이 없습니다.</div>';
   else {
     html += `${detail
       .map((g) => {
