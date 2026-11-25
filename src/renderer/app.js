@@ -3348,6 +3348,392 @@ function bindAuditTab() {
   });
 }
 
+/* ───────────── 메모 탭 (원노트처럼: 회사 | 노트 목록 | 노트) ─────────────
+   회사별 노트를 만들고 쓰고 고치고 지운다. 이 PC에만 저장 (구글·휴대폰으로 보내지 않음) */
+const MEMO_COLORS = ['#31869B', '#4A6FA5', '#7B5EA7', '#B5584A', '#C27C2C', '#5E7A45', '#9A6478', '#3E8E7E'];
+const memoData = () => (S.data.memo ||= { cos: [], notes: [], sel: { co: null, note: null } });
+const MEMO = { q: '' };
+const memoFmt = (ms) => {
+  const d = new Date(ms);
+  const day = `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일 ${'일월화수목금토'[d.getDay()]}요일`;
+  const hh = d.getHours();
+  return `${day} ${hh < 12 ? '오전' : '오후'} ${hh % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+const memoShort = (ms) => {
+  const d = new Date(ms);
+  return D.ymd(d) === D.today() ? `${d.getHours() < 12 ? '오전' : '오후'} ${d.getHours() % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')}` : `${d.getFullYear() % 100}.${d.getMonth() + 1}.${d.getDate()}`;
+};
+const memoText = (html) => {
+  const t = document.createElement('div');
+  t.innerHTML = String(html || '').replace(/<\/?(div|p|li|h[1-3]|tr)\b[^>]*>|<br\s*\/?>/gi, ' $& ');
+  return t.textContent.replace(/\s+/g, ' ').trim();
+};
+/** 붙여넣은 글(웹·원노트·엑셀 등)에서 안전한 서식만 남김 */
+function memoClean(html) {
+  const tpl = document.createElement('template');
+  tpl.innerHTML = html;
+  const ok = new Set(['B', 'STRONG', 'I', 'EM', 'U', 'S', 'BR', 'P', 'DIV', 'UL', 'OL', 'LI', 'H1', 'H2', 'H3', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TD', 'TH', 'MARK', 'A', 'SPAN', 'INPUT']);
+  const walk = (n) => {
+    for (const c of [...n.childNodes]) {
+      if (c.nodeType === 8) c.remove();
+      else if (c.nodeType === 1) {
+        if (!ok.has(c.tagName) || (c.tagName === 'INPUT' && c.type !== 'checkbox')) {
+          walk(c);
+          c.replaceWith(...c.childNodes);
+          continue;
+        }
+        const st = c.getAttribute('style') || '';
+        for (const a of [...c.attributes]) if (!(c.tagName === 'A' && a.name === 'href') && !(c.tagName === 'INPUT' && ['type', 'checked'].includes(a.name))) c.removeAttribute(a.name);
+        if (c.tagName === 'SPAN') {
+          // 굵게·기울임·밑줄·형광펜만 살림
+          let el = c;
+          if (/font-weight:\s*(bold|[6-9]00)/i.test(st)) (el = document.createElement('b')), c.replaceWith(el), el.append(...c.childNodes);
+          else if (/background(-color)?:\s*(yellow|#ff0|#ffff00)/i.test(st)) (el = document.createElement('mark')), c.replaceWith(el), el.append(...c.childNodes);
+          else if (/font-style:\s*italic/i.test(st)) (el = document.createElement('i')), c.replaceWith(el), el.append(...c.childNodes);
+          walk(el);
+          continue;
+        }
+        if (c.tagName === 'A' && !/^https?:|^mailto:/i.test(c.getAttribute('href') || '')) c.removeAttribute('href');
+        walk(c);
+      }
+    }
+  };
+  walk(tpl.content);
+  const d = document.createElement('div');
+  d.append(tpl.content);
+  return d.innerHTML;
+}
+function memoPrompt(title, value = '', ph = '', list = []) {
+  return new Promise((resolve) => {
+    const { el, close } = openModal(
+      `<div class="mhead"><h1>${h(title)}</h1></div>
+       <div class="mbody"><input class="inp" id="memoIn" value="${h(value)}" placeholder="${h(ph)}" list="memoDl" style="width:100%"><datalist id="memoDl">${list.map((x) => `<option value="${h(x)}"></option>`).join('')}</datalist></div>
+       <div class="mfoot"><div class="spacer"></div><button type="button" class="btn primary" data-ok>확인</button><button type="button" class="btn" data-cancel>취소</button></div>`,
+      { cls: 'narrow', onClose: () => resolve(null) }
+    );
+    const inp = el.querySelector('#memoIn');
+    setTimeout(() => (inp.focus(), inp.select()), 30);
+    const ok = () => {
+      const v = inp.value.trim();
+      if (!v) return inp.focus();
+      resolve(v);
+      close();
+    };
+    el.querySelector('[data-ok]').onclick = ok;
+    el.querySelector('[data-cancel]').onclick = () => (resolve(null), close());
+    inp.addEventListener('keydown', (e) => e.key === 'Enter' && !e.isComposing && ok());
+  });
+}
+/** 회사 이름 후보: 감사시간 계약목록·팀 일정·메일에서 알아낸 회사 */
+function memoCoSuggest() {
+  const have = new Set(memoData().cos.map((c) => c.name));
+  const s = new Set();
+  for (const p of S.data.audit?.projects || []) {
+    const co = S.data.audit?.contracts?.[p.code]?.co;
+    if (co) s.add(co);
+  }
+  for (const p of S.data.team?.parsed || []) for (const x of p.people) for (const e of x.entries) if (e.text && !e.added) s.add(e.text.replace(/\*$/, ''));
+  return [...s].filter((x) => !have.has(x)).slice(0, 200);
+}
+function memoNotesOf(coId) {
+  return memoData()
+    .notes.filter((n) => n.coId === coId)
+    .sort((a, b) => b.updated - a.updated);
+}
+function renderMemoTab() {
+  const v = $('#memoView');
+  const M = memoData();
+  if (M.sel.co && !M.cos.some((c) => c.id === M.sel.co)) M.sel.co = null;
+  if (!M.sel.co) M.sel.co = M.cos[0]?.id || null;
+  const q = MEMO.q.trim().toLowerCase();
+  const found = q ? M.notes.filter((n) => `${n.title} ${memoText(n.html)}`.toLowerCase().includes(q)).sort((a, b) => b.updated - a.updated) : null;
+  const notes = found || (M.sel.co ? memoNotesOf(M.sel.co) : []);
+  if (!notes.some((n) => n.id === M.sel.note)) M.sel.note = notes[0]?.id || null;
+  const note = M.notes.find((n) => n.id === M.sel.note) || null;
+  const co = M.cos.find((c) => c.id === (note?.coId || M.sel.co));
+  const cosHtml = M.cos
+    .map(
+      (c) => `<button type="button" class="memo-co ${c.id === M.sel.co && !found ? 'cur' : ''}" data-mco="${c.id}" style="--c:${c.color}" title="오른쪽 클릭: 이름 바꾸기·색·삭제">
+        <span class="nm">${h(c.name)}</span><span class="n">${M.notes.filter((n) => n.coId === c.id).length || ''}</span></button>`
+    )
+    .join('');
+  const listHtml = notes
+    .map((n) => {
+      const c = M.cos.find((x) => x.id === n.coId);
+      const snip = memoText(n.html).slice(0, 60);
+      return `<button type="button" class="memo-pg ${n.id === M.sel.note ? 'cur' : ''}" data-mnote="${n.id}" style="--c:${c?.color || '#999'}">
+        <span class="t">${h(n.title || '제목 없음')}</span>
+        <span class="s">${found && c ? `<b>${h(c.name)}</b> · ` : ''}${h(memoShort(n.updated))}${snip ? ` · ${h(snip)}` : ''}</span></button>`;
+    })
+    .join('');
+  v.innerHTML = `<div class="memo">
+    <aside class="memo-cos">
+      <div class="memo-h">회사</div>
+      <div class="memo-col">${cosHtml || '<div class="muted small" style="padding:10px 12px">아직 회사가 없습니다.</div>'}</div>
+      <button type="button" class="memo-add" data-mcoadd>＋ 회사 추가</button>
+    </aside>
+    <aside class="memo-pgs" style="--c:${co?.color || '#31869B'}">
+      <div class="memo-search"><input class="inp" id="memoQ" placeholder="모든 노트 검색" value="${h(MEMO.q)}"></div>
+      <div class="memo-h">${found ? `검색 결과 ${found.length}개` : h(co?.name || '')}</div>
+      <div class="memo-col">${listHtml || `<div class="muted small" style="padding:10px 12px">${found ? '찾는 노트가 없습니다.' : M.cos.length ? '노트가 없습니다.' : '왼쪽에서 회사를 먼저 추가하세요.'}</div>`}</div>
+      ${!found && co ? '<button type="button" class="memo-add" data-mnoteadd>＋ 노트 추가</button>' : ''}
+    </aside>
+    <section class="memo-page" style="--c:${co?.color || '#31869B'}">
+      ${
+        note
+          ? `<div class="memo-tools" role="toolbar">
+          <button type="button" data-cmd="bold" title="굵게 (Ctrl+B)"><b>가</b></button>
+          <button type="button" data-cmd="italic" title="기울임 (Ctrl+I)"><i>가</i></button>
+          <button type="button" data-cmd="underline" title="밑줄 (Ctrl+U)"><u>가</u></button>
+          <button type="button" data-cmd="strikeThrough" title="취소선"><s>가</s></button>
+          <button type="button" data-cmd="mark" title="형광펜 (Ctrl+Alt+H)"><mark>가</mark></button>
+          <span class="sep"></span>
+          <button type="button" data-cmd="h2" title="제목">제목</button>
+          <button type="button" data-cmd="p" title="본문">본문</button>
+          <span class="sep"></span>
+          <button type="button" data-cmd="insertUnorderedList" title="글머리 기호">• 목록</button>
+          <button type="button" data-cmd="insertOrderedList" title="번호 매기기">1. 목록</button>
+          <button type="button" data-cmd="todo" title="할 일 태그 (Ctrl+1)">☑ 할 일</button>
+          <button type="button" data-cmd="indent" title="들여쓰기 (Tab)">→</button>
+          <button type="button" data-cmd="outdent" title="내어쓰기 (Shift+Tab)">←</button>
+          <button type="button" data-cmd="date" title="오늘 날짜·시간 넣기 (Alt+Shift+D)">📅 날짜</button>
+          <button type="button" data-cmd="removeFormat" title="서식 지우기">서식 지우기</button>
+          <span class="spacer"></span>
+          <select class="inp memo-move" data-mmove title="다른 회사로 옮기기">${M.cos.map((c) => `<option value="${c.id}" ${c.id === note.coId ? 'selected' : ''}>${h(c.name)}</option>`).join('')}</select>
+          <button type="button" class="memo-del" data-mnotedel title="이 노트 삭제">삭제</button>
+        </div>
+        <div class="memo-sheet">
+          <input class="memo-title" id="memoTitle" value="${h(note.title)}" placeholder="제목">
+          <div class="memo-date">${h(memoFmt(note.created))}${note.updated - note.created > 60000 ? ` <span>· 수정 ${h(memoFmt(note.updated))}</span>` : ''}</div>
+          <div class="memo-body" id="memoBody" contenteditable="true" spellcheck="false" data-ph="여기에 입력하세요">${note.html || ''}</div>
+        </div>`
+          : `<div class="memo-empty">${co ? '<button type="button" class="btn primary" data-mnoteadd>＋ 새 노트</button>' : '<button type="button" class="btn primary" data-mcoadd>＋ 회사 추가</button>'}</div>`
+      }
+    </section>
+  </div>`;
+}
+let memoSaveT = null;
+function memoSaveSoon() {
+  clearTimeout(memoSaveT);
+  memoSaveT = setTimeout(memoFlush, 500);
+}
+function memoFlush() {
+  clearTimeout(memoSaveT);
+  const M = memoData();
+  const n = M.notes.find((x) => x.id === M.sel.note);
+  const body = $('#memoBody');
+  const title = $('#memoTitle');
+  if (!n || !body) return;
+  const html = body.innerHTML === '<br>' ? '' : body.innerHTML;
+  const t = title.value.trim();
+  if (n.html === html && n.title === t) return;
+  n.html = html;
+  n.title = t;
+  n.updated = Date.now();
+  save();
+  // 목록의 제목·미리보기만 바꿈 (편집 중인 커서는 그대로)
+  const item = $(`.memo-pg[data-mnote="${n.id}"]`);
+  if (item) {
+    item.querySelector('.t').textContent = n.title || '제목 없음';
+    const snip = memoText(n.html).slice(0, 60);
+    item.querySelector('.s').textContent = `${memoShort(n.updated)}${snip ? ` · ${snip}` : ''}`;
+  }
+}
+async function memoAddCo() {
+  const name = await memoPrompt('회사 추가', '', '회사 이름', memoCoSuggest());
+  if (!name) return;
+  const M = memoData();
+  const ex = M.cos.find((c) => c.name === name);
+  if (ex) M.sel.co = ex.id;
+  else {
+    const c = { id: uid(), name, color: MEMO_COLORS[M.cos.length % MEMO_COLORS.length] };
+    M.cos.push(c);
+    M.sel.co = c.id;
+  }
+  M.sel.note = null;
+  MEMO.q = '';
+  save();
+  renderMemoTab();
+}
+function memoAddNote() {
+  const M = memoData();
+  if (!M.sel.co) return memoAddCo();
+  memoFlush();
+  const now = Date.now();
+  const n = { id: uid(), coId: M.sel.co, title: '', html: '', created: now, updated: now };
+  M.notes.push(n);
+  M.sel.note = n.id;
+  MEMO.q = '';
+  save();
+  renderMemoTab();
+  $('#memoTitle')?.focus();
+}
+async function memoCoMenu(c) {
+  const M = memoData();
+  const n = M.notes.filter((x) => x.coId === c.id).length;
+  const act = await choose(c.name, `노트 ${n}개`, [
+    { label: '이름 바꾸기', value: 'rename' },
+    { label: '색 바꾸기', value: 'color' },
+    { label: '위로', value: 'up' },
+    { label: '삭제', value: 'del', cls: 'danger' },
+  ]);
+  if (act === 'rename') {
+    const name = await memoPrompt('회사 이름 바꾸기', c.name);
+    if (name) c.name = name;
+  } else if (act === 'color') c.color = MEMO_COLORS[(MEMO_COLORS.indexOf(c.color) + 1) % MEMO_COLORS.length];
+  else if (act === 'up') {
+    const i = M.cos.indexOf(c);
+    if (i > 0) M.cos.splice(i - 1, 0, M.cos.splice(i, 1)[0]);
+  } else if (act === 'del') {
+    if (n && (await choose('회사 삭제', `${c.name}의 노트 ${n}개도 함께 지워집니다. 되돌릴 수 없습니다.`, [{ label: '삭제', value: true, cls: 'danger' }])) !== true) return;
+    M.cos = M.cos.filter((x) => x.id !== c.id);
+    M.notes = M.notes.filter((x) => x.coId !== c.id);
+  } else return;
+  save();
+  renderMemoTab();
+}
+function memoTodo() {
+  // 지금 줄 앞에 체크박스 (원노트의 할 일 태그처럼). 이미 있으면 뺌
+  const sel = getSelection();
+  if (!sel.rangeCount) return;
+  let blk = sel.anchorNode;
+  const body = $('#memoBody');
+  while (blk && blk !== body && !(blk.nodeType === 1 && /^(DIV|P|LI|H[1-3])$/.test(blk.tagName))) blk = blk.parentNode;
+  if (!blk || blk === body) {
+    document.execCommand('formatBlock', false, 'div');
+    return memoTodo();
+  }
+  const cb = blk.querySelector(':scope > input[type=checkbox]');
+  if (cb) cb.remove();
+  else blk.insertAdjacentHTML('afterbegin', '<input type="checkbox">');
+  memoSaveSoon();
+}
+function memoCmd(cmd) {
+  const body = $('#memoBody');
+  if (!body) return;
+  body.focus();
+  if (cmd === 'mark') {
+    const inMark = getSelection().anchorNode?.parentElement?.closest('mark');
+    if (inMark) inMark.replaceWith(...inMark.childNodes);
+    else document.execCommand('insertHTML', false, `<mark>${h(getSelection().toString()) || '&#8203;'}</mark>`);
+  } else if (cmd === 'h2') document.execCommand('formatBlock', false, 'h2');
+  else if (cmd === 'p') document.execCommand('formatBlock', false, 'div');
+  else if (cmd === 'todo') return memoTodo();
+  else if (cmd === 'date') document.execCommand('insertText', false, memoFmt(Date.now()));
+  else document.execCommand(cmd);
+  memoSaveSoon();
+}
+function bindMemoTab() {
+  const v = $('#memoView');
+  v.addEventListener('click', (e) => {
+    const t = e.target;
+    if (t.closest('[data-mcoadd]')) return memoAddCo();
+    if (t.closest('[data-mnoteadd]')) return memoAddNote();
+    const c = t.closest('[data-mco]');
+    if (c) {
+      memoFlush();
+      const M = memoData();
+      M.sel.co = c.dataset.mco;
+      M.sel.note = memoNotesOf(M.sel.co)[0]?.id || null;
+      MEMO.q = '';
+      return renderMemoTab();
+    }
+    const n = t.closest('[data-mnote]');
+    if (n) {
+      memoFlush();
+      const M = memoData();
+      M.sel.note = n.dataset.mnote;
+      if (!MEMO.q) M.sel.co = M.notes.find((x) => x.id === M.sel.note)?.coId || M.sel.co;
+      return renderMemoTab();
+    }
+    const b = t.closest('[data-cmd]');
+    if (b) return memoCmd(b.dataset.cmd);
+    if (t.closest('[data-mnotedel]')) {
+      const M = memoData();
+      const note = M.notes.find((x) => x.id === M.sel.note);
+      if (!note) return;
+      return choose('노트 삭제', `"${note.title || '제목 없음'}" 노트를 지울까요? 되돌릴 수 없습니다.`, [{ label: '삭제', value: true, cls: 'danger' }]).then((ok) => {
+        if (!ok) return;
+        const list = memoNotesOf(note.coId);
+        const i = list.indexOf(note);
+        M.notes = M.notes.filter((x) => x.id !== note.id);
+        M.sel.note = (list[i + 1] || list[i - 1])?.id || null; // 바로 아래 노트로
+        save();
+        renderMemoTab();
+      });
+    }
+    // 체크박스: 눌러서 완료 표시 (저장되도록 속성으로 남김)
+    if (t.matches('#memoBody input[type=checkbox]')) {
+      t.toggleAttribute('checked', t.checked);
+      memoSaveSoon();
+    }
+  });
+  v.addEventListener('contextmenu', (e) => {
+    const c = e.target.closest('[data-mco]');
+    if (!c) return;
+    e.preventDefault();
+    const co = memoData().cos.find((x) => x.id === c.dataset.mco);
+    if (co) memoCoMenu(co);
+  });
+  v.addEventListener('mousedown', (e) => {
+    if (e.target.closest('[data-cmd]')) e.preventDefault(); // 도구를 눌러도 글 선택이 풀리지 않게
+  });
+  v.addEventListener('input', (e) => {
+    if (e.target.id === 'memoBody' || e.target.id === 'memoTitle') return memoSaveSoon();
+    if (e.target.id === 'memoQ') {
+      MEMO.q = e.target.value;
+      const pos = e.target.selectionStart;
+      renderMemoTab();
+      const q = $('#memoQ');
+      q.focus();
+      q.setSelectionRange(pos, pos);
+    }
+  });
+  v.addEventListener('change', (e) => {
+    if (e.target.matches('[data-mmove]')) {
+      memoFlush();
+      const M = memoData();
+      const n = M.notes.find((x) => x.id === M.sel.note);
+      if (!n) return;
+      n.coId = e.target.value;
+      M.sel.co = n.coId;
+      save();
+      renderMemoTab();
+    }
+  });
+  v.addEventListener('keydown', (e) => {
+    if (e.target.id === 'memoTitle' && e.key === 'Enter' && !e.isComposing) {
+      e.preventDefault();
+      $('#memoBody')?.focus();
+      return;
+    }
+    if (e.target.id !== 'memoBody') return;
+    if (e.ctrlKey && e.key === '1') {
+      e.preventDefault();
+      memoTodo();
+    } else if (e.ctrlKey && e.altKey && (e.key === 'h' || e.key === 'H')) {
+      e.preventDefault();
+      memoCmd('mark');
+    } else if (e.altKey && e.shiftKey && (e.key === 'd' || e.key === 'D')) {
+      e.preventDefault();
+      memoCmd('date');
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      document.execCommand(e.shiftKey ? 'outdent' : 'indent');
+      memoSaveSoon();
+    }
+  });
+  v.addEventListener('paste', (e) => {
+    if (e.target.closest?.('#memoBody') == null) return;
+    const html = e.clipboardData?.getData('text/html');
+    if (!html) return; // 글자만 있으면 기본 동작
+    e.preventDefault();
+    document.execCommand('insertHTML', false, memoClean(html));
+    memoSaveSoon();
+  });
+  window.addEventListener('beforeunload', memoFlush);
+}
+
 function openTeamView(date) {
   if (!S.data.team?.parsed) {
     toast('먼저 위쪽 "팀 일정" 탭으로 팀 일정표 엑셀을 가져오세요.');
@@ -3808,6 +4194,7 @@ async function init() {
   bindMailView();
   bindTeamTab();
   bindAuditTab();
+  bindMemoTab();
   document.getElementById('aiMeter')?.addEventListener('click', () => openSettings('ai'));
   setTimeout(() => renderAiMeter(), 1500);
   window.api.calls?.onProgress?.((p) => {
@@ -4899,8 +5286,11 @@ function setAppTab(t) {
   $('#mailView').hidden = t !== 'mail';
   $('#teamView').hidden = t !== 'team';
   $('#auditView').hidden = t !== 'audit';
+  $('#memoView').hidden = t !== 'memo';
+  if (t !== 'memo') memoFlush();
   if (t === 'team') renderTeamTab();
   else if (t === 'audit') renderAuditTab();
+  else if (t === 'memo') renderMemoTab();
   else if (t === 'mail') {
     renderMailView();
     // 처음 열거나 10분 넘게 지났으면 새로 읽기

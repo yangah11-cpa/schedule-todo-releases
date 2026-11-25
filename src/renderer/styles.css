@@ -616,3 +616,50 @@ tr.tv-me td { background: #EFF5F7; }
 .au-srcs { display: flex; gap: 6px; min-width: 0; overflow: hidden; flex-wrap: nowrap; }
 .au-srcs .au-src { font-size: 11.5px; padding: 3px 8px; flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .au-srcs .au-src b { font-weight: 600; }
+
+/* 메모 탭 — 원노트처럼: 회사(섹션) | 노트(페이지) 목록 | 노트 */
+.teamview.memoview { padding: 0; overflow: hidden; display: flex; }
+.memo { flex: 1; min-height: 0; display: grid; grid-template-columns: 200px 260px 1fr; background: var(--panel); }
+.memo-cos, .memo-pgs { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); }
+.memo-cos { background: #F4F7F8; }
+.memo-pgs { background: #FBFCFD; }
+.memo-h { padding: 12px 14px 8px; font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: 0.02em; }
+.memo-col { flex: 1; min-height: 0; overflow-y: auto; }
+.memo-co { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: none; text-align: left; font: inherit; font-size: 13.5px; color: var(--ink); padding: 9px 12px 9px 10px; cursor: pointer; border-left: 5px solid var(--c); }
+.memo-co:hover { background: #EAF1F3; }
+.memo-co.cur { background: var(--panel); font-weight: 600; box-shadow: inset 0 0 0 1px var(--line); }
+.memo-co .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memo-co .n { font-size: 11.5px; color: var(--faint); }
+.memo-add { border: 0; border-top: 1px solid var(--line); background: none; font: inherit; font-size: 13px; color: var(--accent-d); padding: 10px 14px; text-align: left; cursor: pointer; }
+.memo-add:hover { background: var(--accent-bg); }
+.memo-search { padding: 10px 10px 0; }
+.memo-search .inp { width: 100%; font-size: 13px; padding: 6px 10px; }
+.memo-pg { display: block; width: 100%; border: 0; border-bottom: 1px solid #EEF2F3; background: none; text-align: left; font: inherit; padding: 9px 14px; cursor: pointer; color: var(--ink); }
+.memo-pg:hover { background: #F1F6F7; }
+.memo-pg.cur { background: color-mix(in srgb, var(--c) 14%, white); box-shadow: inset 3px 0 0 var(--c); }
+.memo-pg .t { display: block; font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memo-pg .s { display: block; margin-top: 2px; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memo-page { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-top: 4px solid var(--c); }
+.memo-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; padding: 6px 10px; border-bottom: 1px solid var(--line); background: #FBFCFD; }
+.memo-tools button { border: 1px solid transparent; background: none; border-radius: 6px; font: inherit; font-size: 13px; padding: 4px 8px; cursor: pointer; color: var(--ink); }
+.memo-tools button:hover { background: var(--accent-bg); border-color: #CDE3E9; }
+.memo-tools mark { background: #FFF176; padding: 0 2px; }
+.memo-tools .sep { width: 1px; height: 18px; background: var(--line2); margin: 0 4px; }
+.memo-tools .memo-move { font-size: 12.5px; padding: 3px 6px; max-width: 180px; }
+.memo-tools .memo-del { color: var(--sun); }
+.memo-sheet { flex: 1; min-height: 0; overflow-y: auto; padding: 26px 44px 60px; }
+.memo-title { width: 100%; border: 0; border-bottom: 1px solid var(--line); outline: none; font: inherit; font-size: 26px; font-weight: 600; color: var(--ink); padding: 2px 0 6px; background: none; }
+.memo-title::placeholder { color: #B8C4C7; }
+.memo-date { margin: 8px 0 18px; font-size: 12.5px; color: var(--muted); }
+.memo-date span { color: var(--faint); }
+.memo-body { min-height: 360px; outline: none; font-size: 14.5px; line-height: 1.75; color: var(--ink); word-break: break-word; }
+.memo-body:empty::before { content: attr(data-ph); color: #B8C4C7; }
+.memo-body h2 { font-size: 18px; margin: 14px 0 4px; color: var(--accent-d); }
+.memo-body ul, .memo-body ol { margin: 2px 0; padding-left: 26px; }
+.memo-body mark { background: #FFF176; }
+.memo-body table { border-collapse: collapse; margin: 6px 0; }
+.memo-body td, .memo-body th { border: 1px solid var(--line2); padding: 4px 8px; }
+.memo-body a { color: var(--accent-d); }
+.memo-body input[type=checkbox] { width: 15px; height: 15px; margin: 0 7px 0 0; vertical-align: -2px; accent-color: var(--accent); cursor: pointer; }
+.memo-body div:has(> input[type=checkbox]:checked), .memo-body li:has(> input[type=checkbox]:checked) { color: var(--faint); text-decoration: line-through; }
+.memo-empty { flex: 1; display: grid; place-items: center; }
