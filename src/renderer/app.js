@@ -3398,7 +3398,17 @@ function memoClean(html) {
           continue;
         }
         const st = c.getAttribute('style') || '';
+        const matt = c.getAttribute('data-matt') || '';
         for (const a of [...c.attributes]) if (!(c.tagName === 'A' && a.name === 'href') && !(c.tagName === 'INPUT' && ['type', 'checked'].includes(a.name))) c.removeAttribute(a.name);
+        if (c.tagName === 'SPAN' && /^[\w-]+\/[^\\/]+$/.test(matt)) {
+          // 첨부파일 칩은 그대로 (이 앱에서 복사한 것)
+          const txt = c.textContent;
+          c.setAttribute('data-matt', matt);
+          c.setAttribute('class', 'matt');
+          c.setAttribute('contenteditable', 'false');
+          c.textContent = txt;
+          continue;
+        }
         if (c.tagName === 'SPAN') {
           // 굵게·기울임·밑줄·형광펜만 살림
           let el = c;
@@ -3450,10 +3460,14 @@ function memoCoSuggest() {
   for (const p of S.data.team?.parsed || []) for (const x of p.people) for (const e of x.entries) if (e.text && !e.added) s.add(e.text.replace(/\*$/, ''));
   return [...s].filter((x) => !have.has(x)).slice(0, 200);
 }
+/** 회사 안 노트 순서: 내가 정한 순서(order). 처음에는 최근 수정순으로 매김 */
 function memoNotesOf(coId) {
-  return memoData()
-    .notes.filter((n) => n.coId === coId)
-    .sort((a, b) => b.updated - a.updated);
+  const list = memoData().notes.filter((n) => n.coId === coId);
+  if (list.some((n) => n.order == null)) {
+    list.sort((a, b) => (a.order != null && b.order != null ? a.order - b.order : b.updated - a.updated));
+    list.forEach((n, i) => (n.order = i));
+  }
+  return list.sort((a, b) => a.order - b.order);
 }
 function renderMemoTab() {
   const v = $('#memoView');
@@ -3468,7 +3482,7 @@ function renderMemoTab() {
   const co = M.cos.find((c) => c.id === (note?.coId || M.sel.co));
   const cosHtml = M.cos
     .map(
-      (c) => `<button type="button" class="memo-co ${c.id === M.sel.co && !found ? 'cur' : ''}" data-mco="${c.id}" style="--c:${c.color}" title="오른쪽 클릭: 이름 바꾸기·색·삭제">
+      (c) => `<button type="button" class="memo-co ${c.id === M.sel.co && !found ? 'cur' : ''}" data-mco="${c.id}" style="--c:${c.color}" draggable="true" title="끌어서 순서 바꾸기 · 오른쪽 클릭: 이름 바꾸기·색·삭제">
         <span class="nm">${h(c.name)}</span><span class="n">${M.notes.filter((n) => n.coId === c.id).length || ''}</span></button>`
     )
     .join('');
@@ -3476,7 +3490,7 @@ function renderMemoTab() {
     .map((n) => {
       const c = M.cos.find((x) => x.id === n.coId);
       const snip = memoText(n.html).slice(0, 60);
-      return `<button type="button" class="memo-pg ${n.id === M.sel.note ? 'cur' : ''}" data-mnote="${n.id}" style="--c:${c?.color || '#999'}">
+      return `<button type="button" class="memo-pg ${n.id === M.sel.note ? 'cur' : ''}" data-mnote="${n.id}" style="--c:${c?.color || '#999'}" ${found ? '' : 'draggable="true" title="끌어서 순서 바꾸기 · 왼쪽 회사 위에 놓으면 그 회사로 옮김"'}>
         <span class="t">${h(n.title || '제목 없음')}</span>
         <span class="s">${found && c ? `<b>${h(c.name)}</b> · ` : ''}${h(memoShort(n.updated))}${snip ? ` · ${h(snip)}` : ''}</span></button>`;
     })
@@ -3513,7 +3527,11 @@ function renderMemoTab() {
           <button type="button" data-cmd="outdent" title="내어쓰기 (Shift+Tab)">←</button>
           <button type="button" data-cmd="date" title="오늘 날짜·시간 넣기 (Alt+Shift+D)">📅 날짜</button>
           <button type="button" data-cmd="img" title="그림 넣기 (붙여넣기·끌어다 놓기도 됨)">🖼 그림</button>
-          <button type="button" data-cmd="removeFormat" title="서식 지우기">서식 지우기</button>
+          <button type="button" data-cmd="file" title="파일 첨부 — PDF·엑셀·한글 등 (끌어다 놓기도 됨)">📎 파일</button>
+          <span class="sep"></span>
+          <button type="button" data-cmd="painter" title="서식 복사: 글자를 누르고 이 버튼 → 바꿀 글자를 드래그 (Ctrl+Shift+C / Ctrl+Shift+V)">🖌 서식 복사</button>
+          <button type="button" data-cmd="pastetext" title="텍스트만 붙여넣기 (Ctrl+Alt+V)">값 붙여넣기</button>
+          <button type="button" data-cmd="removeFormat" title="서식 지우기">지우기</button>
           <span class="spacer"></span>
           <select class="inp memo-move" data-mmove title="다른 회사로 옮기기">${M.cos.map((c) => `<option value="${c.id}" ${c.id === note.coId ? 'selected' : ''}>${h(c.name)}</option>`).join('')}</select>
           <button type="button" class="memo-del" data-mnotedel title="이 노트 삭제">삭제</button>
@@ -3570,7 +3588,9 @@ async function memoSaveDataImgs() {
 }
 async function memoInsertFiles(files) {
   const imgs = [...files].filter((f) => /^image\//.test(f.type));
-  if (!imgs.length) return false;
+  const others = [...files].filter((f) => !/^image\//.test(f.type));
+  if (others.length) memoInsertAtts(await memoAttachFiles(others));
+  if (!imgs.length) return others.length > 0;
   for (const f of imgs) {
     if (f.size > 15 * 1024 * 1024) {
       toast('15MB보다 큰 그림은 넣을 수 없습니다.');
@@ -3657,20 +3677,87 @@ function memoCanvasSize() {
 }
 /** 글상자 오른쪽 클릭 메뉴 */
 function memoBoxMenu(box, x, y) {
+  box.classList.add('picked');
+  const items = [
+    {
+      label: '복제',
+      run: () => {
+        const c = box.cloneNode(true);
+        c.dataset.bid = uid();
+        c.style.left = `${box.offsetLeft + 24}px`;
+        c.style.top = `${box.offsetTop + box.offsetHeight + 12}px`;
+        c.classList.remove('picked');
+        box.after(c);
+        memoCanvasSize();
+        memoSaveSoon();
+      },
+    },
+    {
+      label: '삭제',
+      cls: 'del',
+      run: () => {
+        box.remove();
+        MEMO.box = null;
+        memoCanvasSize();
+        memoSaveSoon();
+      },
+    },
+  ];
+  items.onClose = () => box.classList.remove('picked');
+  memoCtx(x, y, items);
+}
+/* 첨부파일: 프로그램 폴더(memo-files)에 복사, 노트에는 칩(data-matt="id/이름") */
+const memoFileIcon = (n) => (/\.pdf$/i.test(n) ? '📕' : /\.(xlsx?|xlsm|csv)$/i.test(n) ? '📗' : /\.(docx?|hwpx?|txt|rtf)$/i.test(n) ? '📘' : /\.(pptx?)$/i.test(n) ? '📙' : /\.(zip|7z|rar)$/i.test(n) ? '🗜' : '📄');
+const memoSize = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round(b / 1024))}KB`);
+const memoAttHtml = (a) => `<span class="matt" contenteditable="false" data-matt="${h(a.key)}" title="두 번 눌러 열기 · 오른쪽 클릭 메뉴">${memoFileIcon(a.name)} ${h(a.name)} · ${memoSize(a.size)}</span>&nbsp;`;
+const memoAttKeys = (html) => [...String(html || '').matchAll(/data-matt="([^"]+)"/g)].map((m) => m[1].replace(/&amp;/g, '&'));
+async function memoAttachFiles(files) {
+  const out = [];
+  for (const f of files) {
+    if (f.size > 200 * 1024 * 1024) {
+      toast(`${f.name}: 200MB보다 큰 파일은 첨부할 수 없습니다.`);
+      continue;
+    }
+    const p = window.api.memo.filePath(f);
+    const r = p ? await window.api.memo.attach([p]) : await window.api.memo.attachData(f.name, new Uint8Array(await f.arrayBuffer()));
+    if (!r.ok) toast(`첨부하지 못했습니다: ${r.error}`);
+    else out.push(...(Array.isArray(r.data) ? r.data : [r.data]));
+  }
+  return out;
+}
+function memoInsertAtts(list) {
+  if (!list.length) return;
+  memoBox()?.focus();
+  document.execCommand('insertHTML', false, list.map(memoAttHtml).join(''));
+  memoSaveSoon();
+}
+function memoAttMenu(chip, x, y) {
+  memoCtx(x, y, [
+    { label: '열기', run: () => memoAttOpen(chip.dataset.matt) },
+    { label: '폴더에서 보기', run: () => memoAttOpen(chip.dataset.matt, 'show') },
+    { label: '다른 이름으로 저장', run: () => window.api.memo.fileSaveAs(chip.dataset.matt).then((r) => r.ok && r.data && toast('저장했습니다.')) },
+    { label: '삭제', cls: 'del', run: () => (chip.remove(), memoSaveSoon()) },
+  ]);
+}
+async function memoAttOpen(key, how) {
+  const r = await window.api.memo.fileOpen(key, how);
+  if (!r.ok) toast(r.error);
+}
+/** 작은 오른쪽 클릭 메뉴 */
+function memoCtx(x, y, items) {
   $('#memoBoxMenu')?.remove();
   const m = document.createElement('div');
   m.id = 'memoBoxMenu';
   m.className = 'memo-ctx';
-  m.innerHTML = '<button type="button" data-bm="dup">복제</button><button type="button" data-bm="del" class="del">삭제</button>';
-  m.style.left = `${Math.min(x, innerWidth - 140)}px`;
-  m.style.top = `${Math.min(y, innerHeight - 90)}px`;
+  m.innerHTML = items.map((it, i) => (it.sep ? '<span class="sep"></span>' : `<button type="button" data-ci="${i}" class="${it.cls || ''}">${h(it.label)}${it.key ? `<kbd>${h(it.key)}</kbd>` : ''}</button>`)).join('');
   document.body.appendChild(m);
-  box.classList.add('picked');
+  m.style.left = `${Math.min(x, innerWidth - m.offsetWidth - 8)}px`;
+  m.style.top = `${Math.min(y, innerHeight - m.offsetHeight - 8)}px`;
   const off = () => {
     m.remove();
-    box.classList.remove('picked');
     document.removeEventListener('mousedown', away, true);
     document.removeEventListener('keydown', esc, true);
+    items.onClose?.();
   };
   const away = (ev) => !m.contains(ev.target) && off();
   const esc = (ev) => ev.key === 'Escape' && off();
@@ -3678,24 +3765,89 @@ function memoBoxMenu(box, x, y) {
     document.addEventListener('mousedown', away, true);
     document.addEventListener('keydown', esc, true);
   });
+  m.addEventListener('mousedown', (ev) => ev.preventDefault()); // 글 선택 유지
   m.addEventListener('click', (ev) => {
-    const a = ev.target.closest('[data-bm]')?.dataset.bm;
-    if (!a) return;
-    if (a === 'del') {
-      box.remove();
-      MEMO.box = null;
-    } else if (a === 'dup') {
-      const c = box.cloneNode(true);
-      c.dataset.bid = uid();
-      c.style.left = `${box.offsetLeft + 24}px`;
-      c.style.top = `${box.offsetTop + box.offsetHeight + 12}px`;
-      c.classList.remove('picked');
-      box.after(c);
-    }
+    const i = ev.target.closest('[data-ci]')?.dataset.ci;
+    if (i === undefined) return;
     off();
-    memoCanvasSize();
-    memoSaveSoon();
+    items[+i].run();
   });
+}
+/* 복사·붙여넣기: 텍스트만(값) 복사/붙여넣기, 서식 복사/붙여넣기 (원노트처럼 Ctrl+Shift+C / Ctrl+Shift+V) */
+function memoSelHtml() {
+  const sel = getSelection();
+  if (!sel.rangeCount || sel.isCollapsed) return '';
+  const d = document.createElement('div');
+  d.append(sel.getRangeAt(0).cloneContents());
+  return d.innerHTML;
+}
+async function memoPaste(mode) {
+  const box = memoBox();
+  if (!box) return;
+  if (!box.contains(document.activeElement) && document.activeElement !== box) box.focus();
+  const c = await window.api.clipRead();
+  if (mode === 'text' || !c.html) {
+    if (c.text) document.execCommand('insertText', false, c.text);
+  } else {
+    document.execCommand('insertHTML', false, memoClean(c.html));
+    memoSaveDataImgs();
+  }
+  memoSaveSoon();
+}
+/** 지금 커서 위치의 서식 알아내기 */
+function memoFmtAt() {
+  const sel = getSelection();
+  let n = sel.anchorNode;
+  if (!n) return null;
+  if (n.nodeType !== 1) n = n.parentElement;
+  const box = n.closest('.mbox-c');
+  if (!box) return null;
+  const up = (sel2) => !!n.closest(sel2) && box.contains(n.closest(sel2));
+  return {
+    b: up('b,strong') || document.queryCommandState('bold'),
+    i: up('i,em') || document.queryCommandState('italic'),
+    u: up('u') || document.queryCommandState('underline'),
+    s: up('s,strike') || document.queryCommandState('strikeThrough'),
+    mark: up('mark'),
+    h2: up('h2'),
+  };
+}
+function memoFmtApply(f) {
+  const sel = getSelection();
+  if (!f || !sel.rangeCount || sel.isCollapsed) return false;
+  const text = sel.toString();
+  let html = h(text).replace(/\n/g, '<br>');
+  if (f.mark) html = `<mark>${html}</mark>`;
+  if (f.s) html = `<s>${html}</s>`;
+  if (f.u) html = `<u>${html}</u>`;
+  if (f.i) html = `<i>${html}</i>`;
+  if (f.b) html = `<b>${html}</b>`;
+  document.execCommand('insertHTML', false, html);
+  document.execCommand('formatBlock', false, f.h2 ? 'h2' : 'div');
+  memoSaveSoon();
+  return true;
+}
+function memoPainter(on) {
+  MEMO.painter = on ? memoFmtAt() : null;
+  $('#memoCanvas')?.classList.toggle('painting', !!MEMO.painter);
+  $('[data-cmd="painter"]')?.classList.toggle('on', !!MEMO.painter);
+  if (on && !MEMO.painter) toast('서식을 가져올 글자를 먼저 누르세요.');
+  else if (on) toast('서식을 바꿀 글자를 드래그해서 선택하세요. (Esc: 취소)');
+}
+function memoEditMenu(x, y) {
+  const has = !getSelection().isCollapsed;
+  memoCtx(x, y, [
+    { label: '잘라내기', key: 'Ctrl+X', run: () => (document.execCommand('cut'), memoSaveSoon()) },
+    { label: '복사', key: 'Ctrl+C', run: () => document.execCommand('copy') },
+    { label: '텍스트만 복사 (값 복사)', run: () => window.api.clipWriteText(getSelection().toString()).then(() => toast('글자만 복사했습니다.')) },
+    { sep: true },
+    { label: '붙여넣기 (서식 유지)', key: 'Ctrl+V', run: () => memoPaste('html') },
+    { label: '텍스트만 붙여넣기 (값 붙여넣기)', key: 'Ctrl+Alt+V', run: () => memoPaste('text') },
+    { sep: true },
+    { label: '서식 복사', key: 'Ctrl+Shift+C', run: () => ((MEMO.fmt = memoFmtAt()), toast('서식을 복사했습니다. 바꿀 글자를 선택하고 Ctrl+Shift+V')) },
+    ...(MEMO.fmt && has ? [{ label: '서식 붙여넣기', key: 'Ctrl+Shift+V', run: () => memoFmtApply(MEMO.fmt) }] : []),
+    { label: '서식 지우기', run: () => (document.execCommand('removeFormat'), memoSaveSoon()) },
+  ]);
 }
 let memoSaveT = null;
 function memoSaveSoon() {
@@ -3752,7 +3904,8 @@ function memoAddNote() {
   if (!M.sel.co) return memoAddCo();
   memoFlush();
   const now = Date.now();
-  const n = { id: uid(), coId: M.sel.co, title: '', html: '', created: now, updated: now };
+  const top = Math.min(0, ...memoNotesOf(M.sel.co).map((x) => x.order));
+  const n = { id: uid(), coId: M.sel.co, title: '', html: '', created: now, updated: now, order: top - 1 };
   M.notes.push(n);
   M.sel.note = n.id;
   MEMO.q = '';
@@ -3813,6 +3966,11 @@ function memoCmd(cmd) {
   else if (cmd === 'p') document.execCommand('formatBlock', false, 'div');
   else if (cmd === 'todo') return memoTodo();
   else if (cmd === 'date') document.execCommand('insertText', false, memoFmt(Date.now()));
+  else if (cmd === 'file') {
+    window.api.memo.pickFiles().then((r) => (r.ok ? memoInsertAtts(r.data) : toast(r.error)));
+    return;
+  } else if (cmd === 'painter') return memoPainter(!MEMO.painter);
+  else if (cmd === 'pastetext') return memoPaste('text');
   else if (cmd === 'img') {
     const f = document.createElement('input');
     f.type = 'file';
@@ -3860,6 +4018,7 @@ function bindMemoTab() {
         const i = list.indexOf(note);
         M.notes = M.notes.filter((x) => x.id !== note.id);
         window.api.memo.imgDel(memoImgNames(note.html));
+        window.api.memo.fileGc(M.notes.flatMap((x) => memoAttKeys(x.html))); // 남은 노트에 없는 첨부파일 정리 (하루 지난 것만)
         M.sel.note = (list[i + 1] || list[i - 1])?.id || null; // 바로 아래 노트로
         save();
         renderMemoTab();
@@ -3877,6 +4036,15 @@ function bindMemoTab() {
     if (bh) {
       e.preventDefault();
       return memoBoxMenu(bh.closest('.mbox'), e.clientX, e.clientY);
+    }
+    const chip = e.target.closest('.matt');
+    if (chip) {
+      e.preventDefault();
+      return memoAttMenu(chip, e.clientX, e.clientY);
+    }
+    if (e.target.closest('.mbox-c')) {
+      e.preventDefault();
+      return memoEditMenu(e.clientX, e.clientY);
     }
     const c = e.target.closest('[data-mco]');
     if (!c) return;
@@ -3920,7 +4088,23 @@ function bindMemoTab() {
       memoBox()?.focus();
       return;
     }
+    if (e.key === 'Escape' && MEMO.painter) return memoPainter(false);
     if (!e.target.classList?.contains('mbox-c')) return;
+    const k = e.key.toLowerCase();
+    if (e.ctrlKey && e.shiftKey && !e.altKey && k === 'c') {
+      e.preventDefault();
+      MEMO.fmt = memoFmtAt();
+      return toast('서식을 복사했습니다. 바꿀 글자를 선택하고 Ctrl+Shift+V');
+    }
+    if (e.ctrlKey && e.shiftKey && !e.altKey && k === 'v') {
+      e.preventDefault();
+      if (!memoFmtApply(MEMO.fmt)) toast(MEMO.fmt ? '서식을 바꿀 글자를 먼저 선택하세요.' : '먼저 Ctrl+Shift+C로 서식을 복사하세요.');
+      return;
+    }
+    if (e.ctrlKey && e.altKey && k === 'v') {
+      e.preventDefault();
+      return memoPaste('text');
+    }
     if (e.ctrlKey && e.key === '1') {
       e.preventDefault();
       memoTodo();
@@ -3939,9 +4123,9 @@ function bindMemoTab() {
   v.addEventListener('paste', (e) => {
     if (e.target.closest?.('.mbox-c') == null) return;
     const dt = e.clipboardData;
-    const files = [...(dt?.files || [])].filter((f) => /^image\//.test(f.type));
+    const files = [...(dt?.files || [])];
     const html = dt?.getData('text/html');
-    // 캡처한 그림 (글 없이 그림만 복사된 경우)
+    // 캡처한 그림·탐색기에서 복사한 파일 (글 없이 파일만 복사된 경우)
     if (files.length && !(html && /<(p|div|table|span)\b/i.test(html))) {
       e.preventDefault();
       memoInsertFiles(files);
@@ -3951,6 +4135,88 @@ function bindMemoTab() {
     e.preventDefault();
     document.execCommand('insertHTML', false, memoClean(html));
     memoSaveDataImgs();
+  });
+  // 끌어서 순서 바꾸기: 회사 목록 · 노트 목록 (노트를 왼쪽 회사 위에 놓으면 그 회사로 옮김)
+  let drag = null;
+  const clearMarks = () => $$('.memo .dropb, .memo .dropa, .memo .dropin').forEach((x) => x.classList.remove('dropb', 'dropa', 'dropin'));
+  v.addEventListener('dragstart', (e) => {
+    const co = e.target.closest?.('[data-mco]');
+    const pg = e.target.closest?.('[data-mnote]');
+    if (co) drag = { kind: 'co', id: co.dataset.mco };
+    else if (pg && pg.draggable) drag = { kind: 'note', id: pg.dataset.mnote };
+    else return;
+    memoFlush();
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', '');
+    setTimeout(() => (co || pg).classList.add('dragging'));
+  });
+  v.addEventListener('dragend', () => {
+    drag = null;
+    clearMarks();
+    $$('.memo .dragging').forEach((x) => x.classList.remove('dragging'));
+  });
+  const target = (e) => {
+    if (!drag) return null;
+    const co = e.target.closest?.('[data-mco]');
+    const pg = e.target.closest?.('[data-mnote]');
+    if (drag.kind === 'co' && co && co.dataset.mco !== drag.id) return { el: co, id: co.dataset.mco, mode: 'order' };
+    if (drag.kind === 'note' && pg && pg.dataset.mnote !== drag.id) return { el: pg, id: pg.dataset.mnote, mode: 'order' };
+    if (drag.kind === 'note' && co) return { el: co, id: co.dataset.mco, mode: 'move' };
+    return null;
+  };
+  v.addEventListener('dragover', (e) => {
+    const t = target(e);
+    if (!t) return;
+    e.preventDefault();
+    clearMarks();
+    if (t.mode === 'move') t.el.classList.add('dropin');
+    else {
+      const r = t.el.getBoundingClientRect();
+      t.el.classList.add(e.clientY < r.top + r.height / 2 ? 'dropb' : 'dropa');
+    }
+  });
+  v.addEventListener('drop', (e) => {
+    const t = target(e);
+    if (!t) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const M = memoData();
+    const r = t.el.getBoundingClientRect();
+    const after = e.clientY >= r.top + r.height / 2;
+    if (drag.kind === 'co') {
+      const a = M.cos.find((x) => x.id === drag.id);
+      M.cos = M.cos.filter((x) => x !== a);
+      const i = M.cos.findIndex((x) => x.id === t.id);
+      M.cos.splice(i + (after ? 1 : 0), 0, a);
+    } else {
+      const n = M.notes.find((x) => x.id === drag.id);
+      if (t.mode === 'move') {
+        n.coId = t.id;
+        n.order = Math.min(0, ...memoNotesOf(t.id).filter((x) => x !== n).map((x) => x.order)) - 1;
+        M.sel.co = t.id;
+        M.sel.note = n.id;
+        toast(`${M.cos.find((c) => c.id === t.id)?.name}(으)로 옮겼습니다.`);
+      } else {
+        const list = memoNotesOf(n.coId).filter((x) => x !== n);
+        const i = list.findIndex((x) => x.id === t.id);
+        list.splice(i + (after ? 1 : 0), 0, n);
+        list.forEach((x, k) => (x.order = k));
+      }
+    }
+    drag = null;
+    clearMarks();
+    save();
+    renderMemoTab();
+  });
+  v.addEventListener('dblclick', (e) => {
+    const chip = e.target.closest?.('.matt');
+    if (chip) memoAttOpen(chip.dataset.matt);
+  });
+  v.addEventListener('mouseup', (e) => {
+    if (!MEMO.painter || !e.target.closest?.('.mbox-c')) return;
+    setTimeout(() => {
+      if (memoFmtApply(MEMO.painter)) memoPainter(false);
+    }, 0);
   });
   v.addEventListener('focusin', (e) => {
     if (e.target.classList?.contains('mbox-c')) MEMO.box = e.target;
@@ -4012,7 +4278,7 @@ function bindMemoTab() {
     const cv = e.target.closest?.('#memoCanvas');
     if (!cv) return;
     const files = [...(e.dataTransfer?.files || [])];
-    if (!files.some((f) => /^image\//.test(f.type))) return;
+    if (!files.length) return;
     e.preventDefault();
     // 빈 곳에 놓으면 그 자리에 새 글상자
     if (!e.target.closest('.mbox-c')) {
@@ -4503,6 +4769,7 @@ async function init() {
     if (!$('#memoView').hidden) renderMemoTab();
     // 어느 노트에도 없는 그림 파일 정리
     window.api.memo.imgGc((S.data.memo?.notes || []).flatMap((n) => memoImgNames(n.html)));
+    window.api.memo.fileGc((S.data.memo?.notes || []).flatMap((n) => memoAttKeys(n.html)));
   });
   document.getElementById('aiMeter')?.addEventListener('click', () => openSettings('ai'));
   setTimeout(() => renderAiMeter(), 1500);

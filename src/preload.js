@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 const call = (ch) => (...args) => ipcRenderer.invoke(ch, ...args);
 
@@ -17,7 +17,11 @@ contextBridge.exposeInMainWorld('api', {
   team: { open: call('team:open') },
   audit: { open: call('audit:open'), export: call('audit:export') },
   clipText: call('clip:text'),
-  memo: { img: call('memo:img'), imgBase: call('memo:imgBase'), imgDel: call('memo:imgDel'), imgGc: call('memo:imgGc') },
+  memo: { img: call('memo:img'), imgBase: call('memo:imgBase'), imgDel: call('memo:imgDel'), imgGc: call('memo:imgGc'),
+    attach: call('memo:attach'), attachData: call('memo:attachData'), pickFiles: call('memo:pickFiles'), fileOpen: call('memo:fileOpen'), fileSaveAs: call('memo:fileSaveAs'), fileGc: call('memo:fileGc'),
+    filePath: (f) => { try { return webUtils.getPathForFile(f) || ''; } catch { return ''; } } },
+  clipRead: () => ipcRenderer.invoke('clip:read'),
+  clipWriteText: (t) => ipcRenderer.invoke('clip:writeText', t),
   phone: { messages: call('phone:messages'), thread: call('phone:thread'), contacts: call('phone:contacts') },
   calls: {
     list: call('calls:list'),

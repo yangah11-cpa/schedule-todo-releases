@@ -690,3 +690,23 @@ tr.tv-me td { background: #EFF5F7; }
 .mbox.picked { border-color: var(--accent); }
 .mbox:hover .mbox-h, .mbox:focus-within .mbox-h, .mbox.picked .mbox-h { background: #D5E5EA; }
 .mbox-h { height: 11px; }
+/* 메모: 끌어서 순서 바꾸기 */
+.memo-co.dragging, .memo-pg.dragging { opacity: 0.4; }
+.memo-co.dropb, .memo-pg.dropb { box-shadow: inset 0 3px 0 var(--accent); }
+.memo-co.dropa, .memo-pg.dropa { box-shadow: inset 0 -3px 0 var(--accent); }
+.memo-co.dropin { background: var(--accent-bg); box-shadow: inset 0 0 0 2px var(--accent); }
+/* 첨부파일 칩 */
+.matt { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; margin: 2px 2px; border: 1px solid #CFDCE0; border-radius: 8px; background: #F4F8F9; font-size: 13px; color: var(--ink); cursor: pointer; user-select: none; white-space: nowrap; }
+.matt:hover { background: var(--accent-bg); border-color: var(--accent); }
+/* 오른쪽 클릭 메뉴 */
+.memo-ctx { min-width: 220px; }
+.memo-ctx button { display: flex; justify-content: space-between; gap: 18px; }
+.memo-ctx kbd { font: inherit; font-size: 11.5px; color: var(--faint); }
+.memo-ctx .sep { height: 1px; background: var(--line); margin: 3px 6px; }
+/* 서식 복사 중 */
+.memo-canvas.painting, .memo-canvas.painting .mbox-c { cursor: copy; }
+.memo-tools button.on { background: var(--accent-bg); border-color: var(--accent); }
+.memo-tools { flex-wrap: nowrap; overflow-x: auto; gap: 0; }
+.memo-tools button { padding: 4px 6px; font-size: 12.5px; white-space: nowrap; flex-shrink: 0; }
+.memo-tools .sep { margin: 0 3px; flex-shrink: 0; }
+.memo-tools .memo-move { max-width: 130px; flex-shrink: 1; min-width: 80px; }

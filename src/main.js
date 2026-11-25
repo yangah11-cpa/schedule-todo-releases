@@ -302,6 +302,83 @@ app.whenReady().then(() => {
       return n;
     })
   );
+  // 메모 첨부파일: 프로그램 폴더(memo-files/<id>/<원래 이름>)에 복사해 둠
+  const memoFileDir = () => {
+    const d = path.join(app.getPath('userData'), 'memo-files');
+    fs.mkdirSync(d, { recursive: true });
+    return d;
+  };
+  const memoFileKey = (key) => {
+    const [id, ...rest] = String(key || '').split('/');
+    const name = rest.join('/');
+    if (!/^[\w-]+$/.test(id) || !name || /[\\/]|\.\./.test(name)) throw new Error('잘못된 첨부파일');
+    return path.join(memoFileDir(), id, name);
+  };
+  const memoAttachOne = (name, writeFn) => {
+    const id = require('crypto').randomUUID();
+    const safe = String(name || '파일').replace(/[\\/:*?"<>|]/g, '_').slice(0, 180) || '파일';
+    fs.mkdirSync(path.join(memoFileDir(), id), { recursive: true });
+    const dest = path.join(memoFileDir(), id, safe);
+    writeFn(dest);
+    return { key: `${id}/${safe}`, name: safe, size: fs.statSync(dest).size };
+  };
+  ipcMain.handle(
+    'memo:attach',
+    wrap((paths) =>
+      (paths || []).filter((p) => p && fs.existsSync(p) && fs.statSync(p).isFile()).map((p) => memoAttachOne(path.basename(p), (d) => fs.copyFileSync(p, d)))
+    )
+  );
+  ipcMain.handle('memo:attachData', wrap((name, bytes) => memoAttachOne(name, (d) => fs.writeFileSync(d, Buffer.from(bytes)))));
+  ipcMain.handle(
+    'memo:pickFiles',
+    wrap(async () => {
+      const r = await dialog.showOpenDialog(win, { title: '노트에 첨부할 파일', properties: ['openFile', 'multiSelections'] });
+      if (r.canceled) return [];
+      return r.filePaths.map((p) => memoAttachOne(path.basename(p), (d) => fs.copyFileSync(p, d)));
+    })
+  );
+  ipcMain.handle(
+    'memo:fileOpen',
+    wrap(async (key, how) => {
+      const f = memoFileKey(key);
+      if (!fs.existsSync(f)) throw new Error('파일이 없습니다 (지워졌거나 옮겨졌습니다).');
+      if (how === 'show') shell.showItemInFolder(f);
+      else {
+        const err = await shell.openPath(f);
+        if (err) throw new Error(err);
+      }
+      return true;
+    })
+  );
+  ipcMain.handle(
+    'memo:fileSaveAs',
+    wrap(async (key) => {
+      const f = memoFileKey(key);
+      const r = await dialog.showSaveDialog(win, { title: '다른 이름으로 저장', defaultPath: path.join(app.getPath('downloads'), path.basename(f)) });
+      if (r.canceled || !r.filePath) return null;
+      fs.copyFileSync(f, r.filePath);
+      return r.filePath;
+    })
+  );
+  ipcMain.handle(
+    'memo:fileGc',
+    wrap((keep) => {
+      const k = new Set((keep || []).map((x) => String(x).split('/')[0]));
+      const d = memoFileDir();
+      let n = 0;
+      for (const id of fs.readdirSync(d)) {
+        const p = path.join(d, id);
+        if (!k.has(id) && Date.now() - fs.statSync(p).mtimeMs > 86400000) {
+          fs.rmSync(p, { recursive: true, force: true });
+          n++;
+        }
+      }
+      return n;
+    })
+  );
+  // 붙여넣기 메뉴용 클립보드 (서식 있는 글 / 글자만)
+  ipcMain.handle('clip:read', () => ({ html: clipboard.readHTML(), text: clipboard.readText() }));
+  ipcMain.handle('clip:writeText', (_e, t) => clipboard.writeText(String(t || '')));
   ipcMain.handle('memo:imgBase', wrap(() => require('url').pathToFileURL(memoImgDir()).href + '/'));
   ipcMain.handle(
     'memo:imgDel',
