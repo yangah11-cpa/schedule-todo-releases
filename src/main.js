@@ -270,6 +270,46 @@ app.whenReady().then(() => {
   );
   // 감사시간 탭: 회사 시스템에서 받은 엑셀(투입시간·담당이사·계약목록) 읽기. 이 PC에만 보관
   ipcMain.handle('clip:text', () => clipboard.readText());
+  // 메모 탭 그림: 노트 자료(data.json)에 넣지 않고 이 PC의 프로그램 폴더(memo-img)에 파일로 저장
+  const memoImgDir = () => {
+    const d = path.join(app.getPath('userData'), 'memo-img');
+    fs.mkdirSync(d, { recursive: true });
+    return d;
+  };
+  ipcMain.handle(
+    'memo:img',
+    wrap((dataUrl) => {
+      const m = /^data:image\/(png|jpe?g|gif|webp|bmp);base64,(.+)$/i.exec(String(dataUrl || ''));
+      if (!m) throw new Error('그림 형식이 아닙니다.');
+      const name = `${require('crypto').randomUUID()}.${m[1].toLowerCase().replace('jpeg', 'jpg')}`;
+      const file = path.join(memoImgDir(), name);
+      fs.writeFileSync(file, Buffer.from(m[2], 'base64'));
+      return { name, url: require('url').pathToFileURL(file).href };
+    })
+  );
+  // 어느 노트에도 없는 그림 파일 정리 (하루 지난 것만)
+  ipcMain.handle(
+    'memo:imgGc',
+    wrap((keep) => {
+      const k = new Set(keep || []);
+      const d = memoImgDir();
+      let n = 0;
+      for (const f of fs.readdirSync(d))
+        if (!k.has(f) && Date.now() - fs.statSync(path.join(d, f)).mtimeMs > 86400000) {
+          fs.rmSync(path.join(d, f), { force: true });
+          n++;
+        }
+      return n;
+    })
+  );
+  ipcMain.handle('memo:imgBase', wrap(() => require('url').pathToFileURL(memoImgDir()).href + '/'));
+  ipcMain.handle(
+    'memo:imgDel',
+    wrap((names) => {
+      for (const n of names || []) if (/^[\w-]+\.\w+$/.test(n)) fs.rm(path.join(memoImgDir(), n), { force: true }, () => {});
+      return true;
+    })
+  );
   ipcMain.handle(
     'audit:export',
     wrap(async (spec, defName) => {

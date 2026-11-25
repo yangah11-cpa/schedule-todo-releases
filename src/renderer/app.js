@@ -3372,11 +3372,26 @@ const memoText = (html) => {
 function memoClean(html) {
   const tpl = document.createElement('template');
   tpl.innerHTML = html;
-  const ok = new Set(['B', 'STRONG', 'I', 'EM', 'U', 'S', 'BR', 'P', 'DIV', 'UL', 'OL', 'LI', 'H1', 'H2', 'H3', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TD', 'TH', 'MARK', 'A', 'SPAN', 'INPUT']);
+  const ok = new Set(['B', 'STRONG', 'I', 'EM', 'U', 'S', 'BR', 'P', 'DIV', 'UL', 'OL', 'LI', 'H1', 'H2', 'H3', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TD', 'TH', 'MARK', 'A', 'SPAN', 'INPUT', 'IMG']);
   const walk = (n) => {
     for (const c of [...n.childNodes]) {
       if (c.nodeType === 8) c.remove();
       else if (c.nodeType === 1) {
+        if (c.tagName === 'IMG') {
+          // 그림: 이 앱에 저장된 것(data-mimg) 또는 붙여넣은 그림 데이터(data:)만. 인터넷 주소 그림은 뺌
+          const src = c.getAttribute('src') || '';
+          const mi = c.getAttribute('data-mimg');
+          const w = c.getAttribute('data-w');
+          for (const a of [...c.attributes]) c.removeAttribute(a.name);
+          if (mi && /^[\w-]+\.\w+$/.test(mi)) c.setAttribute('data-mimg', mi);
+          else if (/^data:image\//i.test(src)) c.setAttribute('src', src);
+          else {
+            c.remove();
+            continue;
+          }
+          if (w === 's' || w === 'm') c.setAttribute('data-w', w);
+          continue;
+        }
         if (!ok.has(c.tagName) || (c.tagName === 'INPUT' && c.type !== 'checkbox')) {
           walk(c);
           c.replaceWith(...c.childNodes);
@@ -3497,6 +3512,7 @@ function renderMemoTab() {
           <button type="button" data-cmd="indent" title="들여쓰기 (Tab)">→</button>
           <button type="button" data-cmd="outdent" title="내어쓰기 (Shift+Tab)">←</button>
           <button type="button" data-cmd="date" title="오늘 날짜·시간 넣기 (Alt+Shift+D)">📅 날짜</button>
+          <button type="button" data-cmd="img" title="그림 넣기 (붙여넣기·끌어다 놓기도 됨)">🖼 그림</button>
           <button type="button" data-cmd="removeFormat" title="서식 지우기">서식 지우기</button>
           <span class="spacer"></span>
           <select class="inp memo-move" data-mmove title="다른 회사로 옮기기">${M.cos.map((c) => `<option value="${c.id}" ${c.id === note.coId ? 'selected' : ''}>${h(c.name)}</option>`).join('')}</select>
@@ -3511,6 +3527,92 @@ function renderMemoTab() {
       }
     </section>
   </div>`;
+  memoFixImgs(v);
+}
+/* 메모 그림: 파일은 프로그램 폴더(memo-img)에, 노트에는 이름(data-mimg)만 */
+let memoImgBase = '';
+const memoImgNames = (html) => [...String(html || '').matchAll(/data-mimg="([\w-]+\.\w+)"/g)].map((m) => m[1]);
+function memoFixImgs(root) {
+  for (const im of root.querySelectorAll('img[data-mimg]')) if (memoImgBase) im.src = memoImgBase + im.dataset.mimg;
+}
+/** 노트 html 저장용: 그림 주소(src)는 빼고 이름만 남김 */
+function memoStoreHtml(body) {
+  const c = body.cloneNode(true);
+  c.querySelectorAll('img[data-mimg]').forEach((im) => im.removeAttribute('src'));
+  c.querySelectorAll('img.sel').forEach((im) => im.classList.remove('sel'));
+  c.querySelectorAll('img[class=""]').forEach((im) => im.removeAttribute('class'));
+  return c.innerHTML === '<br>' ? '' : c.innerHTML;
+}
+const fileToDataUrl = (f) =>
+  new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = rej;
+    r.readAsDataURL(f);
+  });
+/** 본문에 남아 있는 data: 그림을 파일로 저장하고 이름으로 바꿈 */
+async function memoSaveDataImgs() {
+  const body = $('#memoBody');
+  if (!body) return;
+  for (const im of body.querySelectorAll('img[src^="data:"]:not([data-mimg])')) {
+    const r = await window.api.memo.img(im.getAttribute('src'));
+    if (r.ok) {
+      im.dataset.mimg = r.data.name;
+      im.src = r.data.url;
+    } else im.remove();
+  }
+  memoSaveSoon();
+}
+async function memoInsertFiles(files) {
+  const imgs = [...files].filter((f) => /^image\//.test(f.type));
+  if (!imgs.length) return false;
+  for (const f of imgs) {
+    if (f.size > 15 * 1024 * 1024) {
+      toast('15MB보다 큰 그림은 넣을 수 없습니다.');
+      continue;
+    }
+    const r = await window.api.memo.img(await fileToDataUrl(f));
+    if (!r.ok) {
+      toast(`그림을 넣지 못했습니다: ${r.error}`);
+      continue;
+    }
+    $('#memoBody')?.focus();
+    document.execCommand('insertHTML', false, `<img data-mimg="${r.data.name}" src="${r.data.url}"><br>`);
+  }
+  memoSaveSoon();
+  return true;
+}
+/** 그림을 누르면 크기 고르기 (작게 / 중간 / 원래) */
+function memoImgBar(im) {
+  $('#memoImgBar')?.remove();
+  $$('#memoBody img.sel').forEach((x) => x.classList.remove('sel'));
+  if (!im) return;
+  im.classList.add('sel');
+  const sel = getSelection();
+  const r = document.createRange();
+  r.selectNode(im);
+  sel.removeAllRanges();
+  sel.addRange(r);
+  const sheet = $('.memo-sheet');
+  const bar = document.createElement('div');
+  bar.id = 'memoImgBar';
+  bar.className = 'memo-imgbar';
+  bar.innerHTML = `<button type="button" data-imw="s">작게</button><button type="button" data-imw="m">중간</button><button type="button" data-imw="">원래 크기</button><button type="button" data-imw="del">삭제</button>`;
+  const a = im.getBoundingClientRect();
+  const b = sheet.getBoundingClientRect();
+  bar.style.top = `${a.top - b.top + sheet.scrollTop + 6}px`;
+  bar.style.left = `${a.left - b.left + 6}px`;
+  sheet.appendChild(bar);
+  bar.addEventListener('mousedown', (e) => e.preventDefault());
+  bar.addEventListener('click', (e) => {
+    const w = e.target.closest('[data-imw]')?.dataset.imw;
+    if (w === undefined) return;
+    if (w === 'del') im.remove();
+    else if (w) im.dataset.w = w;
+    else delete im.dataset.w;
+    memoImgBar(null);
+    memoSaveSoon();
+  });
 }
 let memoSaveT = null;
 function memoSaveSoon() {
@@ -3524,7 +3626,7 @@ function memoFlush() {
   const body = $('#memoBody');
   const title = $('#memoTitle');
   if (!n || !body) return;
-  const html = body.innerHTML === '<br>' ? '' : body.innerHTML;
+  const html = memoStoreHtml(body);
   const t = title.value.trim();
   if (n.html === html && n.title === t) return;
   n.html = html;
@@ -3587,6 +3689,7 @@ async function memoCoMenu(c) {
   } else if (act === 'del') {
     if (n && (await choose('회사 삭제', `${c.name}의 노트 ${n}개도 함께 지워집니다. 되돌릴 수 없습니다.`, [{ label: '삭제', value: true, cls: 'danger' }])) !== true) return;
     M.cos = M.cos.filter((x) => x.id !== c.id);
+    window.api.memo.imgDel(M.notes.filter((x) => x.coId === c.id).flatMap((x) => memoImgNames(x.html)));
     M.notes = M.notes.filter((x) => x.coId !== c.id);
   } else return;
   save();
@@ -3620,6 +3723,15 @@ function memoCmd(cmd) {
   else if (cmd === 'p') document.execCommand('formatBlock', false, 'div');
   else if (cmd === 'todo') return memoTodo();
   else if (cmd === 'date') document.execCommand('insertText', false, memoFmt(Date.now()));
+  else if (cmd === 'img') {
+    const f = document.createElement('input');
+    f.type = 'file';
+    f.accept = 'image/*';
+    f.multiple = true;
+    f.onchange = () => memoInsertFiles(f.files);
+    f.click();
+    return;
+  }
   else document.execCommand(cmd);
   memoSaveSoon();
 }
@@ -3657,6 +3769,7 @@ function bindMemoTab() {
         const list = memoNotesOf(note.coId);
         const i = list.indexOf(note);
         M.notes = M.notes.filter((x) => x.id !== note.id);
+        window.api.memo.imgDel(memoImgNames(note.html));
         M.sel.note = (list[i + 1] || list[i - 1])?.id || null; // 바로 아래 노트로
         save();
         renderMemoTab();
@@ -3725,11 +3838,41 @@ function bindMemoTab() {
   });
   v.addEventListener('paste', (e) => {
     if (e.target.closest?.('#memoBody') == null) return;
-    const html = e.clipboardData?.getData('text/html');
+    const dt = e.clipboardData;
+    const files = [...(dt?.files || [])].filter((f) => /^image\//.test(f.type));
+    const html = dt?.getData('text/html');
+    // 캡처한 그림 (글 없이 그림만 복사된 경우)
+    if (files.length && !(html && /<(p|div|table|span)\b/i.test(html))) {
+      e.preventDefault();
+      memoInsertFiles(files);
+      return;
+    }
     if (!html) return; // 글자만 있으면 기본 동작
     e.preventDefault();
     document.execCommand('insertHTML', false, memoClean(html));
-    memoSaveSoon();
+    memoSaveDataImgs();
+  });
+  v.addEventListener('dragover', (e) => {
+    if (e.target.closest?.('#memoBody') && [...(e.dataTransfer?.items || [])].some((i) => i.kind === 'file')) e.preventDefault();
+  });
+  v.addEventListener('drop', (e) => {
+    if (!e.target.closest?.('#memoBody')) return;
+    const files = [...(e.dataTransfer?.files || [])];
+    if (!files.some((f) => /^image\//.test(f.type))) return;
+    e.preventDefault();
+    // 놓은 곳에 커서를 두고 넣음
+    const r = document.caretRangeFromPoint?.(e.clientX, e.clientY);
+    if (r) {
+      const sel = getSelection();
+      sel.removeAllRanges();
+      sel.addRange(r);
+    }
+    memoInsertFiles(files);
+  });
+  v.addEventListener('click', (e) => {
+    const im = e.target.closest?.('#memoBody img');
+    if (im) return memoImgBar(im);
+    if (!e.target.closest?.('#memoImgBar')) memoImgBar(null);
   });
   window.addEventListener('beforeunload', memoFlush);
 }
@@ -4195,6 +4338,12 @@ async function init() {
   bindTeamTab();
   bindAuditTab();
   bindMemoTab();
+  window.api.memo.imgBase().then((r) => {
+    if (r.ok) memoImgBase = r.data;
+    if (!$('#memoView').hidden) renderMemoTab();
+    // 어느 노트에도 없는 그림 파일 정리
+    window.api.memo.imgGc((S.data.memo?.notes || []).flatMap((n) => memoImgNames(n.html)));
+  });
   document.getElementById('aiMeter')?.addEventListener('click', () => openSettings('ai'));
   setTimeout(() => renderAiMeter(), 1500);
   window.api.calls?.onProgress?.((p) => {

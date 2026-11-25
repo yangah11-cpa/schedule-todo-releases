@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('api', {
   team: { open: call('team:open') },
   audit: { open: call('audit:open'), export: call('audit:export') },
   clipText: call('clip:text'),
+  memo: { img: call('memo:img'), imgBase: call('memo:imgBase'), imgDel: call('memo:imgDel'), imgGc: call('memo:imgGc') },
   phone: { messages: call('phone:messages'), thread: call('phone:thread'), contacts: call('phone:contacts') },
   calls: {
     list: call('calls:list'),
