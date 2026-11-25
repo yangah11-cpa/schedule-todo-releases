@@ -3557,7 +3557,13 @@ function renderMemoTab() {
   </div>`;
   memoFixImgs(v);
   MEMO.box = null;
+  const fixed = memoUnpile() || (note?.boxes || []).some((b) => b.fix);
   memoCanvasSize();
+  if (fixed) {
+    for (const b of note.boxes) delete b.fix;
+    note.boxes = []; // 다시 저장되게
+    memoFlush();
+  }
 }
 /* 메모 그림: 파일은 프로그램 폴더(memo-img)에, 노트에는 이름(data-mimg)만 */
 let memoImgBase = '';
@@ -3649,7 +3655,25 @@ function memoImgBar(im) {
 /* 원노트처럼 노트 아무 곳에 글상자: { id, x, y, w, html } */
 function memoBoxes(n) {
   if (!n.boxes) n.boxes = n.html ? [{ id: uid(), x: 0, y: 0, w: 640, html: n.html }] : []; // 예전 노트는 맨 위 글상자 하나로
+  for (const b of n.boxes) if (!(b.w >= 160)) (b.w = 560), (b.fix = true); // 폭 0으로 저장된 글상자 고침 (1.0.82 이전 버그)
   return n.boxes;
+}
+/** 같은 자리에 겹쳐 저장된 글상자(예전 버그)를 아래로 차례대로 펼침 */
+function memoUnpile() {
+  const cv = $('#memoCanvas');
+  if (!cv) return false;
+  const seen = new Map();
+  let moved = false;
+  let bottom = 0;
+  for (const el of cv.querySelectorAll('.mbox')) {
+    const k = `${el.style.left}|${el.style.top}`;
+    if (seen.has(k)) {
+      el.style.top = `${bottom + 12}px`;
+      moved = true;
+    } else seen.set(k, el);
+    bottom = Math.max(bottom, el.offsetTop + el.offsetHeight);
+  }
+  return moved;
 }
 const memoBoxHtml = (b) =>
   `<div class="mbox" data-bid="${b.id}" style="left:${b.x}px;top:${b.y}px;width:${b.w}px"><div class="mbox-h" title="끌어서 옮기기"></div><div class="mbox-c" contenteditable="true" spellcheck="false">${b.html || ''}</div><div class="mbox-r" title="끌어서 폭 조절"></div></div>`;
@@ -3870,7 +3894,11 @@ function memoFlush() {
   if (!n || !cv) return;
   // 빈 글상자는 버림 (입력 중인 것은 남김)
   const boxes = [...cv.querySelectorAll('.mbox')]
-    .map((el) => ({ el, id: el.dataset.bid, x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, html: memoStoreHtml(el.querySelector('.mbox-c')) }))
+    .map((el) => {
+      // 위치·폭은 글상자에 적어 둔 값으로 (화면이 숨겨져 있어도 0이 되지 않게)
+      const px = (v, d) => (Number.isFinite(parseFloat(v)) ? Math.round(parseFloat(v)) : d);
+      return { el, id: el.dataset.bid, x: px(el.style.left, el.offsetLeft), y: px(el.style.top, el.offsetTop), w: Math.max(160, px(el.style.width, el.offsetWidth)), html: memoStoreHtml(el.querySelector('.mbox-c')) };
+    })
     .filter((b) => b.html.replace(/<br\s*\/?>|&nbsp;|\s/g, '') || b.el.contains(document.activeElement))
     .sort((a, b) => a.y - b.y || a.x - b.x)
     .map(({ el, ...b }) => b);
@@ -5869,8 +5897,8 @@ function setAppTab(t) {
   $('#mailView').hidden = t !== 'mail';
   $('#teamView').hidden = t !== 'team';
   $('#auditView').hidden = t !== 'audit';
+  if (t !== 'memo' && !$('#memoView').hidden) memoFlush(); // 숨기기 전에 저장 (숨긴 뒤에는 크기·위치를 읽을 수 없음)
   $('#memoView').hidden = t !== 'memo';
-  if (t !== 'memo') memoFlush();
   if (t === 'team') renderTeamTab();
   else if (t === 'audit') renderAuditTab();
   else if (t === 'memo') renderMemoTab();
