@@ -3522,8 +3522,9 @@ function renderMemoTab() {
           <input class="memo-title" id="memoTitle" value="${h(note.title)}" placeholder="제목">
           <div class="memo-date">${h(memoFmt(note.created))}${note.updated - note.created > 60000 ? ` <span>· 수정 ${h(memoFmt(note.updated))}</span>` : ''}</div>
           <div class="memo-canvas" id="memoCanvas" title="빈 곳을 누르면 그 자리에 입력">${memoBoxes(note)
+            .filter((b) => (b.html || '').replace(/<br\s*\/?>|&nbsp;|\s/g, ''))
             .map((b) => memoBoxHtml(b))
-            .join('')}${memoBoxes(note).length ? '' : '<div class="memo-hint">아무 곳이나 눌러서 입력하세요</div>'}</div>
+            .join('')}${memoBoxes(note).some((b) => (b.html || '').replace(/<br\s*\/?>|&nbsp;|\s/g, '')) ? '' : '<div class="memo-hint">아무 곳이나 눌러서 입력하세요</div>'}</div>
         </div>`
           : `<div class="memo-empty">${co ? '<button type="button" class="btn primary" data-mnoteadd>＋ 새 노트</button>' : '<button type="button" class="btn primary" data-mcoadd>＋ 회사 추가</button>'}</div>`
       }
@@ -3653,6 +3654,48 @@ function memoCanvasSize() {
   let bottom = 0;
   for (const b of cv.querySelectorAll('.mbox')) bottom = Math.max(bottom, b.offsetTop + b.offsetHeight);
   cv.style.minHeight = `${Math.max(bottom + 320, (cv.parentElement?.clientHeight || 600) - 120)}px`;
+}
+/** 글상자 오른쪽 클릭 메뉴 */
+function memoBoxMenu(box, x, y) {
+  $('#memoBoxMenu')?.remove();
+  const m = document.createElement('div');
+  m.id = 'memoBoxMenu';
+  m.className = 'memo-ctx';
+  m.innerHTML = '<button type="button" data-bm="dup">복제</button><button type="button" data-bm="del" class="del">삭제</button>';
+  m.style.left = `${Math.min(x, innerWidth - 140)}px`;
+  m.style.top = `${Math.min(y, innerHeight - 90)}px`;
+  document.body.appendChild(m);
+  box.classList.add('picked');
+  const off = () => {
+    m.remove();
+    box.classList.remove('picked');
+    document.removeEventListener('mousedown', away, true);
+    document.removeEventListener('keydown', esc, true);
+  };
+  const away = (ev) => !m.contains(ev.target) && off();
+  const esc = (ev) => ev.key === 'Escape' && off();
+  setTimeout(() => {
+    document.addEventListener('mousedown', away, true);
+    document.addEventListener('keydown', esc, true);
+  });
+  m.addEventListener('click', (ev) => {
+    const a = ev.target.closest('[data-bm]')?.dataset.bm;
+    if (!a) return;
+    if (a === 'del') {
+      box.remove();
+      MEMO.box = null;
+    } else if (a === 'dup') {
+      const c = box.cloneNode(true);
+      c.dataset.bid = uid();
+      c.style.left = `${box.offsetLeft + 24}px`;
+      c.style.top = `${box.offsetTop + box.offsetHeight + 12}px`;
+      c.classList.remove('picked');
+      box.after(c);
+    }
+    off();
+    memoCanvasSize();
+    memoSaveSoon();
+  });
 }
 let memoSaveT = null;
 function memoSaveSoon() {
@@ -3829,6 +3872,12 @@ function bindMemoTab() {
     }
   });
   v.addEventListener('contextmenu', (e) => {
+    // 글상자 위 막대(또는 테두리) 오른쪽 클릭: 삭제·복제
+    const bh = e.target.closest('.mbox-h, .mbox-r');
+    if (bh) {
+      e.preventDefault();
+      return memoBoxMenu(bh.closest('.mbox'), e.clientX, e.clientY);
+    }
     const c = e.target.closest('[data-mco]');
     if (!c) return;
     e.preventDefault();

@@ -683,3 +683,10 @@ tr.tv-me td { background: #EFF5F7; }
 .mbox:hover .mbox-h, .mbox:focus-within .mbox-h { background: #E3ECEF; }
 .mbox-r { position: absolute; top: 9px; right: -4px; bottom: 0; width: 8px; cursor: ew-resize; }
 .mbox-c { min-height: 0 !important; padding: 2px 8px 6px; }
+.memo-ctx { position: fixed; z-index: 1000; min-width: 120px; background: var(--panel); border: 1px solid var(--line2); border-radius: 8px; box-shadow: 0 6px 20px rgba(38, 52, 58, 0.18); padding: 4px; display: flex; flex-direction: column; }
+.memo-ctx button { border: 0; background: none; font: inherit; font-size: 13px; text-align: left; padding: 7px 12px; border-radius: 6px; cursor: pointer; color: var(--ink); }
+.memo-ctx button:hover { background: var(--accent-bg); }
+.memo-ctx button.del { color: var(--sun); }
+.mbox.picked { border-color: var(--accent); }
+.mbox:hover .mbox-h, .mbox:focus-within .mbox-h, .mbox.picked .mbox-h { background: #D5E5EA; }
+.mbox-h { height: 11px; }
