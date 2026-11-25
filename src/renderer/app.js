@@ -3376,7 +3376,12 @@ function memoClean(html) {
   const walk = (n) => {
     for (const c of [...n.childNodes]) {
       if (c.nodeType === 8) c.remove();
-      else if (c.nodeType === 1) {
+      else if (c.nodeType === 1 && /^(STYLE|SCRIPT|META|LINK|TITLE|HEAD|XML|TEMPLATE|NOSCRIPT|IFRAME|OBJECT|SVG)$/i.test(c.tagName)) c.remove(); // 엑셀·워드가 함께 보내는 서식 설명(스타일) 등은 통째로 버림
+      else if (c.nodeType === 1 && /^[a-z]+:/i.test(c.tagName)) {
+        // <o:p> 같은 오피스 전용 태그: 내용만 남김
+        walk(c);
+        c.replaceWith(...c.childNodes);
+      } else if (c.nodeType === 1) {
         if (c.tagName === 'IMG') {
           // 그림: 이 앱에 저장된 것(data-mimg) 또는 붙여넣은 그림 데이터(data:)만. 인터넷 주소 그림은 뺌
           const src = c.getAttribute('src') || '';
@@ -3399,7 +3404,9 @@ function memoClean(html) {
         }
         const st = c.getAttribute('style') || '';
         const matt = c.getAttribute('data-matt') || '';
+        const right = /^(TD|TH)$/.test(c.tagName) && (/right/i.test(c.getAttribute('align') || '') || /text-align:\s*right/i.test(st));
         for (const a of [...c.attributes]) if (!(c.tagName === 'A' && a.name === 'href') && !(c.tagName === 'INPUT' && ['type', 'checked'].includes(a.name))) c.removeAttribute(a.name);
+        if (right) c.setAttribute('align', 'right'); // 엑셀 숫자 칸 오른쪽 정렬 유지
         if (c.tagName === 'SPAN' && /^[\w-]+\/[^\\/]+$/.test(matt)) {
           // 첨부파일 칩은 그대로 (이 앱에서 복사한 것)
           const txt = c.textContent;
