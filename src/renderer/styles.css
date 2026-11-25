@@ -652,23 +652,34 @@ tr.tv-me td { background: #EFF5F7; }
 .memo-title::placeholder { color: #B8C4C7; }
 .memo-date { margin: 8px 0 18px; font-size: 12.5px; color: var(--muted); }
 .memo-date span { color: var(--faint); }
-.memo-body { min-height: 360px; outline: none; font-size: 14.5px; line-height: 1.75; color: var(--ink); word-break: break-word; }
-.memo-body:empty::before { content: attr(data-ph); color: #B8C4C7; }
-.memo-body h2 { font-size: 18px; margin: 14px 0 4px; color: var(--accent-d); }
-.memo-body ul, .memo-body ol { margin: 2px 0; padding-left: 26px; }
-.memo-body mark { background: #FFF176; }
-.memo-body table { border-collapse: collapse; margin: 6px 0; }
-.memo-body td, .memo-body th { border: 1px solid var(--line2); padding: 4px 8px; }
-.memo-body a { color: var(--accent-d); }
-.memo-body input[type=checkbox] { width: 15px; height: 15px; margin: 0 7px 0 0; vertical-align: -2px; accent-color: var(--accent); cursor: pointer; }
-.memo-body div:has(> input[type=checkbox]:checked), .memo-body li:has(> input[type=checkbox]:checked) { color: var(--faint); text-decoration: line-through; }
+.mbox-c { min-height: 360px; outline: none; font-size: 14.5px; line-height: 1.75; color: var(--ink); word-break: break-word; }
+.mbox-c:empty::before { content: attr(data-ph); color: #B8C4C7; }
+.mbox-c h2 { font-size: 18px; margin: 14px 0 4px; color: var(--accent-d); }
+.mbox-c ul, .mbox-c ol { margin: 2px 0; padding-left: 26px; }
+.mbox-c mark { background: #FFF176; }
+.mbox-c table { border-collapse: collapse; margin: 6px 0; }
+.mbox-c td, .mbox-c th { border: 1px solid var(--line2); padding: 4px 8px; }
+.mbox-c a { color: var(--accent-d); }
+.mbox-c input[type=checkbox] { width: 15px; height: 15px; margin: 0 7px 0 0; vertical-align: -2px; accent-color: var(--accent); cursor: pointer; }
+.mbox-c div:has(> input[type=checkbox]:checked), .mbox-c li:has(> input[type=checkbox]:checked) { color: var(--faint); text-decoration: line-through; }
 .memo-empty { flex: 1; display: grid; place-items: center; }
 .memo-sheet { position: relative; }
-.memo-body img { display: block; max-width: 100%; height: auto; margin: 6px 0; border-radius: 4px; cursor: pointer; }
-.memo-body img[data-w="s"] { max-width: 30%; }
-.memo-body img[data-w="m"] { max-width: 60%; }
-.memo-body img.sel { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mbox-c img { display: block; max-width: 100%; height: auto; margin: 6px 0; border-radius: 4px; cursor: pointer; }
+.mbox-c img[data-w="s"] { max-width: 30%; }
+.mbox-c img[data-w="m"] { max-width: 60%; }
+.mbox-c img.sel { outline: 2px solid var(--accent); outline-offset: 2px; }
 .memo-imgbar { position: absolute; z-index: 5; display: flex; gap: 2px; background: var(--panel); border: 1px solid var(--line2); border-radius: 8px; box-shadow: 0 4px 14px rgba(38, 52, 58, 0.15); padding: 3px; }
 .memo-imgbar button { border: 0; background: none; font: inherit; font-size: 12.5px; padding: 4px 9px; border-radius: 6px; cursor: pointer; color: var(--ink); }
 .memo-imgbar button:hover { background: var(--accent-bg); }
 .memo-imgbar button[data-imw="del"] { color: var(--sun); }
+
+/* 원노트처럼 아무 곳에 글상자 */
+.memo-canvas { position: relative; min-height: 600px; cursor: text; }
+.memo-hint { position: absolute; left: 0; top: 4px; color: #B8C4C7; font-size: 14px; pointer-events: auto; }
+.mbox { position: absolute; padding: 0; border: 1px solid transparent; border-radius: 3px; }
+.mbox:hover, .mbox:focus-within { border-color: #CFDCE0; }
+.mbox.drag { opacity: 0.85; border-color: var(--accent); }
+.mbox-h { height: 9px; margin: -1px -1px 0; border-radius: 3px 3px 0 0; cursor: move; background: transparent; }
+.mbox:hover .mbox-h, .mbox:focus-within .mbox-h { background: #E3ECEF; }
+.mbox-r { position: absolute; top: 9px; right: -4px; bottom: 0; width: 8px; cursor: ew-resize; }
+.mbox-c { min-height: 0 !important; padding: 2px 8px 6px; }

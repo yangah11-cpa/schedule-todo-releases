@@ -3521,13 +3521,17 @@ function renderMemoTab() {
         <div class="memo-sheet">
           <input class="memo-title" id="memoTitle" value="${h(note.title)}" placeholder="제목">
           <div class="memo-date">${h(memoFmt(note.created))}${note.updated - note.created > 60000 ? ` <span>· 수정 ${h(memoFmt(note.updated))}</span>` : ''}</div>
-          <div class="memo-body" id="memoBody" contenteditable="true" spellcheck="false" data-ph="여기에 입력하세요">${note.html || ''}</div>
+          <div class="memo-canvas" id="memoCanvas" title="빈 곳을 누르면 그 자리에 입력">${memoBoxes(note)
+            .map((b) => memoBoxHtml(b))
+            .join('')}${memoBoxes(note).length ? '' : '<div class="memo-hint">아무 곳이나 눌러서 입력하세요</div>'}</div>
         </div>`
           : `<div class="memo-empty">${co ? '<button type="button" class="btn primary" data-mnoteadd>＋ 새 노트</button>' : '<button type="button" class="btn primary" data-mcoadd>＋ 회사 추가</button>'}</div>`
       }
     </section>
   </div>`;
   memoFixImgs(v);
+  MEMO.box = null;
+  memoCanvasSize();
 }
 /* 메모 그림: 파일은 프로그램 폴더(memo-img)에, 노트에는 이름(data-mimg)만 */
 let memoImgBase = '';
@@ -3552,7 +3556,7 @@ const fileToDataUrl = (f) =>
   });
 /** 본문에 남아 있는 data: 그림을 파일로 저장하고 이름으로 바꿈 */
 async function memoSaveDataImgs() {
-  const body = $('#memoBody');
+  const body = $('#memoCanvas');
   if (!body) return;
   for (const im of body.querySelectorAll('img[src^="data:"]:not([data-mimg])')) {
     const r = await window.api.memo.img(im.getAttribute('src'));
@@ -3576,7 +3580,7 @@ async function memoInsertFiles(files) {
       toast(`그림을 넣지 못했습니다: ${r.error}`);
       continue;
     }
-    $('#memoBody')?.focus();
+    memoBox()?.focus();
     document.execCommand('insertHTML', false, `<img data-mimg="${r.data.name}" src="${r.data.url}"><br>`);
   }
   memoSaveSoon();
@@ -3585,7 +3589,7 @@ async function memoInsertFiles(files) {
 /** 그림을 누르면 크기 고르기 (작게 / 중간 / 원래) */
 function memoImgBar(im) {
   $('#memoImgBar')?.remove();
-  $$('#memoBody img.sel').forEach((x) => x.classList.remove('sel'));
+  $$('#memoCanvas img.sel').forEach((x) => x.classList.remove('sel'));
   if (!im) return;
   im.classList.add('sel');
   const sel = getSelection();
@@ -3614,6 +3618,42 @@ function memoImgBar(im) {
     memoSaveSoon();
   });
 }
+/* 원노트처럼 노트 아무 곳에 글상자: { id, x, y, w, html } */
+function memoBoxes(n) {
+  if (!n.boxes) n.boxes = n.html ? [{ id: uid(), x: 0, y: 0, w: 640, html: n.html }] : []; // 예전 노트는 맨 위 글상자 하나로
+  return n.boxes;
+}
+const memoBoxHtml = (b) =>
+  `<div class="mbox" data-bid="${b.id}" style="left:${b.x}px;top:${b.y}px;width:${b.w}px"><div class="mbox-h" title="끌어서 옮기기"></div><div class="mbox-c" contenteditable="true" spellcheck="false">${b.html || ''}</div><div class="mbox-r" title="끌어서 폭 조절"></div></div>`;
+/** 지금 입력 중인 글상자 (없으면 맨 위에 하나 만듦) */
+function memoBox() {
+  if (MEMO.box?.isConnected) return MEMO.box;
+  const cv = $('#memoCanvas');
+  if (!cv) return null;
+  const first = cv.querySelector('.mbox-c');
+  if (first) return (MEMO.box = first);
+  return memoNewBox(0, 0);
+}
+function memoNewBox(x, y) {
+  const cv = $('#memoCanvas');
+  if (!cv) return null;
+  cv.querySelector('.memo-hint')?.remove();
+  const b = { id: uid(), x: Math.max(0, Math.round(x)), y: Math.max(0, Math.round(y)), w: Math.min(560, Math.max(240, cv.clientWidth - x - 20)), html: '' };
+  cv.insertAdjacentHTML('beforeend', memoBoxHtml(b));
+  const c = cv.querySelector(`.mbox[data-bid="${b.id}"] .mbox-c`);
+  MEMO.box = c;
+  c.focus();
+  memoCanvasSize();
+  return c;
+}
+/** 글상자 아래로 여유 공간 (아래쪽 빈 곳도 눌러서 쓸 수 있게) */
+function memoCanvasSize() {
+  const cv = $('#memoCanvas');
+  if (!cv) return;
+  let bottom = 0;
+  for (const b of cv.querySelectorAll('.mbox')) bottom = Math.max(bottom, b.offsetTop + b.offsetHeight);
+  cv.style.minHeight = `${Math.max(bottom + 320, (cv.parentElement?.clientHeight || 600) - 120)}px`;
+}
 let memoSaveT = null;
 function memoSaveSoon() {
   clearTimeout(memoSaveT);
@@ -3623,12 +3663,19 @@ function memoFlush() {
   clearTimeout(memoSaveT);
   const M = memoData();
   const n = M.notes.find((x) => x.id === M.sel.note);
-  const body = $('#memoBody');
+  const cv = $('#memoCanvas');
   const title = $('#memoTitle');
-  if (!n || !body) return;
-  const html = memoStoreHtml(body);
+  if (!n || !cv) return;
+  // 빈 글상자는 버림 (입력 중인 것은 남김)
+  const boxes = [...cv.querySelectorAll('.mbox')]
+    .map((el) => ({ el, id: el.dataset.bid, x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, html: memoStoreHtml(el.querySelector('.mbox-c')) }))
+    .filter((b) => b.html.replace(/<br\s*\/?>|&nbsp;|\s/g, '') || b.el.contains(document.activeElement))
+    .sort((a, b) => a.y - b.y || a.x - b.x)
+    .map(({ el, ...b }) => b);
+  const html = boxes.map((b) => b.html).filter(Boolean).join('<div></div>');
   const t = title.value.trim();
-  if (n.html === html && n.title === t) return;
+  if (JSON.stringify(n.boxes || []) === JSON.stringify(boxes) && n.title === t) return;
+  n.boxes = boxes;
   n.html = html;
   n.title = t;
   n.updated = Date.now();
@@ -3700,7 +3747,7 @@ function memoTodo() {
   const sel = getSelection();
   if (!sel.rangeCount) return;
   let blk = sel.anchorNode;
-  const body = $('#memoBody');
+  const body = (blk?.nodeType === 1 ? blk : blk?.parentElement)?.closest('.mbox-c') || memoBox();
   while (blk && blk !== body && !(blk.nodeType === 1 && /^(DIV|P|LI|H[1-3])$/.test(blk.tagName))) blk = blk.parentNode;
   if (!blk || blk === body) {
     document.execCommand('formatBlock', false, 'div');
@@ -3712,9 +3759,9 @@ function memoTodo() {
   memoSaveSoon();
 }
 function memoCmd(cmd) {
-  const body = $('#memoBody');
+  const body = memoBox();
   if (!body) return;
-  body.focus();
+  if (!body.contains(document.activeElement) && document.activeElement !== body) body.focus();
   if (cmd === 'mark') {
     const inMark = getSelection().anchorNode?.parentElement?.closest('mark');
     if (inMark) inMark.replaceWith(...inMark.childNodes);
@@ -3776,7 +3823,7 @@ function bindMemoTab() {
       });
     }
     // 체크박스: 눌러서 완료 표시 (저장되도록 속성으로 남김)
-    if (t.matches('#memoBody input[type=checkbox]')) {
+    if (t.matches('.mbox-c input[type=checkbox]')) {
       t.toggleAttribute('checked', t.checked);
       memoSaveSoon();
     }
@@ -3792,7 +3839,11 @@ function bindMemoTab() {
     if (e.target.closest('[data-cmd]')) e.preventDefault(); // 도구를 눌러도 글 선택이 풀리지 않게
   });
   v.addEventListener('input', (e) => {
-    if (e.target.id === 'memoBody' || e.target.id === 'memoTitle') return memoSaveSoon();
+    if (e.target.classList?.contains('mbox-c')) {
+      memoCanvasSize();
+      return memoSaveSoon();
+    }
+    if (e.target.id === 'memoTitle') return memoSaveSoon();
     if (e.target.id === 'memoQ') {
       MEMO.q = e.target.value;
       const pos = e.target.selectionStart;
@@ -3817,10 +3868,10 @@ function bindMemoTab() {
   v.addEventListener('keydown', (e) => {
     if (e.target.id === 'memoTitle' && e.key === 'Enter' && !e.isComposing) {
       e.preventDefault();
-      $('#memoBody')?.focus();
+      memoBox()?.focus();
       return;
     }
-    if (e.target.id !== 'memoBody') return;
+    if (!e.target.classList?.contains('mbox-c')) return;
     if (e.ctrlKey && e.key === '1') {
       e.preventDefault();
       memoTodo();
@@ -3837,7 +3888,7 @@ function bindMemoTab() {
     }
   });
   v.addEventListener('paste', (e) => {
-    if (e.target.closest?.('#memoBody') == null) return;
+    if (e.target.closest?.('.mbox-c') == null) return;
     const dt = e.clipboardData;
     const files = [...(dt?.files || [])].filter((f) => /^image\//.test(f.type));
     const html = dt?.getData('text/html');
@@ -3852,14 +3903,74 @@ function bindMemoTab() {
     document.execCommand('insertHTML', false, memoClean(html));
     memoSaveDataImgs();
   });
+  v.addEventListener('focusin', (e) => {
+    if (e.target.classList?.contains('mbox-c')) MEMO.box = e.target;
+  });
+  // 빈 곳 누르면 그 자리에 새 글상자 (원노트처럼)
+  v.addEventListener('mousedown', (e) => {
+    const cv = e.target.closest?.('#memoCanvas');
+    if (!cv || e.button !== 0) return;
+    if (e.target === cv || e.target.classList.contains('memo-hint')) {
+      e.preventDefault();
+      memoFlush();
+      const r = cv.getBoundingClientRect();
+      memoNewBox(e.clientX - r.left - 4, e.clientY - r.top - 10);
+      return;
+    }
+    // 글상자 옮기기(위 막대) · 폭 조절(오른쪽 끝)
+    const hd = e.target.closest('.mbox-h, .mbox-r');
+    if (!hd) return;
+    e.preventDefault();
+    const box = hd.closest('.mbox');
+    const sx = e.clientX;
+    const sy = e.clientY;
+    const ox = box.offsetLeft;
+    const oy = box.offsetTop;
+    const ow = box.offsetWidth;
+    const move = hd.classList.contains('mbox-h');
+    box.classList.add('drag');
+    const mm = (ev) => {
+      if (move) {
+        box.style.left = `${Math.max(0, ox + ev.clientX - sx)}px`;
+        box.style.top = `${Math.max(0, oy + ev.clientY - sy)}px`;
+      } else box.style.width = `${Math.max(160, ow + ev.clientX - sx)}px`;
+    };
+    const up = () => {
+      document.removeEventListener('mousemove', mm);
+      document.removeEventListener('mouseup', up);
+      box.classList.remove('drag');
+      memoCanvasSize();
+      memoSaveSoon();
+    };
+    document.addEventListener('mousemove', mm);
+    document.addEventListener('mouseup', up);
+  });
+  // 비어 있는 글상자는 다른 곳을 누르면 사라짐
+  v.addEventListener('focusout', (e) => {
+    const c = e.target.classList?.contains('mbox-c') ? e.target : null;
+    if (!c) return;
+    setTimeout(() => {
+      if (c.isConnected && !c.contains(document.activeElement) && !c.innerHTML.replace(/<br\s*\/?>|&nbsp;|\s/g, '') && !$('#memoImgBar')) {
+        c.closest('.mbox').remove();
+        memoSaveSoon();
+      }
+    }, 150);
+  });
   v.addEventListener('dragover', (e) => {
-    if (e.target.closest?.('#memoBody') && [...(e.dataTransfer?.items || [])].some((i) => i.kind === 'file')) e.preventDefault();
+    if (e.target.closest?.('#memoCanvas') && [...(e.dataTransfer?.items || [])].some((i) => i.kind === 'file')) e.preventDefault();
   });
   v.addEventListener('drop', (e) => {
-    if (!e.target.closest?.('#memoBody')) return;
+    const cv = e.target.closest?.('#memoCanvas');
+    if (!cv) return;
     const files = [...(e.dataTransfer?.files || [])];
     if (!files.some((f) => /^image\//.test(f.type))) return;
     e.preventDefault();
+    // 빈 곳에 놓으면 그 자리에 새 글상자
+    if (!e.target.closest('.mbox-c')) {
+      const r = cv.getBoundingClientRect();
+      memoNewBox(e.clientX - r.left, e.clientY - r.top);
+      return memoInsertFiles(files);
+    }
     // 놓은 곳에 커서를 두고 넣음
     const r = document.caretRangeFromPoint?.(e.clientX, e.clientY);
     if (r) {
@@ -3870,7 +3981,7 @@ function bindMemoTab() {
     memoInsertFiles(files);
   });
   v.addEventListener('click', (e) => {
-    const im = e.target.closest?.('#memoBody img');
+    const im = e.target.closest?.('.mbox-c img');
     if (im) return memoImgBar(im);
     if (!e.target.closest?.('#memoImgBar')) memoImgBar(null);
   });
